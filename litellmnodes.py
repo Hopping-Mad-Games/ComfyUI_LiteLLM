@@ -1,6 +1,6 @@
 import os
 import json
-import config
+from . import config
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}

@@ -5,12 +5,12 @@
 @description: Nodes for interfacing with LiteLLM
 """
 
-import config
+from . import config
 
 NODE_CLASS_MAPPINGS = {}
 WEB_DIRECTORY = None
 
-import litellmnodes
+from . import litellmnodes
 
 NODE_CLASS_MAPPINGS.update(litellmnodes.NODE_CLASS_MAPPINGS)
 
