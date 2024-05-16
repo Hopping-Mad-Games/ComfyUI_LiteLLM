@@ -1,3 +1,4 @@
 pyyaml
 addict
 litellm
+boto3

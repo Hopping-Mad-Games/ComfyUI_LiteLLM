@@ -163,6 +163,11 @@ class LiteLLMCompletion:
 
         response_content = response_first_choice_message_content or ""
 
+        # first check if the tmp directory exists
+        if not os.path.exists(config.config_settings['tmp_dir']):
+            os.makedirs(config.config_settings['tmp_dir'])
+
+
         # delete the file if it exists
         if os.path.exists(cache_file_path):
             os.remove(cache_file_path)
