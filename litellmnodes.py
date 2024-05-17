@@ -39,7 +39,9 @@ class LiteLLMModelProvider:
                              "anthropic/claude-3-opus-20240229",
                              "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
                              "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
-                             "bedrock/anthropic.claude-3-opus-20240229-v1:0"
+                             "bedrock/anthropic.claude-3-opus-20240229-v1:0",
+                             "vertex_ai/gemini-1.5-pro-preview-0514",
+                             "vertex_ai/gemini-1.5-flash-preview-0514",
                          ],
 
                          {"default": "anthropic/claude-3-haiku-20240307"}),
@@ -67,7 +69,7 @@ class LiteLLMCompletion:
         return {
             "required": {
                 "model": ("LITELLM_MODEL", {"default": "anthropic/claude-3-haiku-20240307"}),
-                "max_tokens": ("INT", {"default": 250,"min": 1, "max": 1e10, "step": 1}),
+                "max_tokens": ("INT", {"default": 250, "min": 1, "max": 1e10, "step": 1}),
                 "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "top_p": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "frequency_penalty": ("FLOAT", {"default": 0}),
@@ -180,8 +182,8 @@ class LiteLLMCompletion:
         messages.append({"content": response_content, "role": response_first_choice_message.role})
 
         # Extract the usage information from the response
-        d = response.usage
-        lines = [f"{k}:{v}" for k, v in d]
+        d = response.usage.model_extra
+        lines = [f"{k}:{v}" for k, v in d.items()]
         usage = "\n".join(lines)
 
         if cached_completion:
@@ -201,11 +203,27 @@ class LiteLLMCompletion:
         #print(usage)
 
         return (model, messages, response_content, usage,)
+@litellm_base
+class LiteLLMCompletionPrePend(LiteLLMCompletion):
+    """just like LiteLLMCompletion but with a pre-pended prompt"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        base = LiteLLMCompletion.INPUT_TYPES()
+        base["required"]["pre_prompt"] = ("STRING", {"default": "pre", "multiline": True})
+        _ = base["required"].pop("prompt")
+        base["required"]["prompt"] = ("STRING", {"default": "prompt", "multiline": True})
+        return base
+    RETURN_TYPES = LiteLLMCompletion.RETURN_TYPES
+    def handler(self, **kwargs):
+        kwargs["prompt"] = f"{kwargs['pre_prompt']}\n{kwargs['prompt']}"
+        return super().handler(**kwargs)
+
 
 
 @litellm_base
 class LiteLLMCompletionListOfPrompts:
-    """just calls LiteLLMCompletion for each prompt in the list"""
+    """Calls LiteLLMCompletion for each prompt in the list asynchronously"""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -213,6 +231,7 @@ class LiteLLMCompletionListOfPrompts:
         base["required"]["pre_prompt"] = base["required"]["prompt"]
         base["required"].pop("prompt")
         base["required"]["prompts"] = ("LIST", {"default": None})
+        base["required"]["async"] = ("BOOLEAN", {"default": True})
         return base
 
     RETURN_TYPES = ("LITELLM_MODEL", "LIST", "STRING",)
@@ -220,21 +239,30 @@ class LiteLLMCompletionListOfPrompts:
 
     def handler(self, **kwargs):
         import litellm
+        import asyncio
+
         prompts = kwargs.get("prompts", ["Hello World!"])
         completions = []
         total_usage = {}
         pre_prompt = kwargs.get("pre_prompt", "Hello World!")
-        for prompt in prompts:
-            kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
-            model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
-            completions.append(completion)
 
-            # for k, v in usage.items():
-            #     if k in total_usage:
-            #         total_usage[k] += v
-            #     else:
-            #         total_usage[k] = v
-        return (model, completions, "",)
+        async def process_prompt(prompt):
+            kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
+            model, messages, completion, usage = await asyncio.to_thread(LiteLLMCompletion().handler, **kwargs)
+            return completion
+
+        async def process_prompts():
+            return await asyncio.gather(*[process_prompt(prompt) for prompt in prompts])
+
+        if kwargs["async"]:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            completions = loop.run_until_complete(process_prompts())
+            loop.close()
+        else:
+            completions = [process_prompt(prompt).send() for prompt in prompts]
+
+        return (kwargs["model"], completions, "")
 
 
 @litellm_base
@@ -463,7 +491,10 @@ class LiteLLMMessage:
         from copy import deepcopy
         existing_messages = kwargs.get('messages', [])
         existing_messages = deepcopy(existing_messages)
-        content = kwargs.get('content', "Hello World!")
+        content = kwargs.get('content', "")
+        if content == "":
+            return (existing_messages,)
+
         role = kwargs.get('role', "user")
         new_message = {"content": content, "role": role}
         new_messages = existing_messages + [new_message]
