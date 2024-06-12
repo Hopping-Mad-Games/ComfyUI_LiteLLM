@@ -30,3 +30,6 @@ config_file_path = os.path.join(this_file_path, "config.yaml")
 config_settings = read_yaml(config_file_path, config_replacements)
 # add the replacements directly to the config_settings
 config_settings.update(config_replacements)
+# for every item in the config set an env variable to it
+for k,v in config_settings.items():
+ os.environ[k]=v
