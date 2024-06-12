@@ -248,9 +248,8 @@ class ShowLastMessage:
         text_d.append(s)
 
         res = lst
-
-        ret = {"ui": {"text": ["\n".join(text_d)]}, "result": [res]}
-
+        out_list = ["\n".join(text_d)]
+        ret = {"ui": {"string": out_list}, "result": (res,)}
         return ret
 
 
@@ -310,7 +309,8 @@ class ShowMessages:
 
         res = lst
 
-        ret = {"ui": {"text": ["\n".join(text_d)]}, "result": [res]}
+        out_list = ["\n".join(text_d)]
+        ret = {"ui": {"string":out_list}, "result": (res,)}
 
         return ret
 

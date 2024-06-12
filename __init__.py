@@ -4,11 +4,20 @@
 @nickname: Tasha
 @description: Nodes for interfacing with LiteLLM
 """
+import os
+import sys
+import __main__
 
 from . import config
 
+python = sys.executable
+
+extentions_folder = os.path.join(os.path.dirname(os.path.realpath(__main__.__file__)),
+                                 "web" + os.sep + "extensions" + os.sep + "Comfy-MK")
+javascript_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)), "js")
+
 NODE_CLASS_MAPPINGS = {}
-WEB_DIRECTORY = None
+WEB_DIRECTORY = "js"
 
 from . import litellmnodes
 
