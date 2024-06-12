@@ -169,7 +169,6 @@ class LiteLLMCompletion:
         if not os.path.exists(config.config_settings['tmp_dir']):
             os.makedirs(config.config_settings['tmp_dir'])
 
-
         # delete the file if it exists
         if os.path.exists(cache_file_path):
             os.remove(cache_file_path)
@@ -200,9 +199,122 @@ class LiteLLMCompletion:
 
             usage = top + usage
 
-        #print(usage)
+        # print(usage)
 
         return (model, messages, response_content, usage,)
+
+
+@litellm_base
+class ShowLastMessage:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "messages": ("LLLM_MESSAGES", {"default": "Something to show..."}),
+            },
+            "optional": {
+                "list_display": ("STRING", {"multi_line": True, "default": ""}),
+            },
+        }
+
+    INPUT_IS_LIST = False
+    RETURN_TYPES = ("LLLM_MESSAGES",)
+    RETURN_NAMES = ("messages",)
+    INTERNAL_STATE_DISPLAY = "list_display"
+
+    # THIS IS BRYTHON CODE
+    INTERNAL_STATE = ""
+    FUNCTION = "handler"
+    OUTPUT_NODE = True
+    # OUTPUT_IS_LIST = (True,)
+    description = "Show list in browser"
+    CATEGORY = "utils"
+
+    def handler(self, **kwargs):
+        from copy import deepcopy
+        kwargs = deepcopy(kwargs)
+        lst = kwargs.get("messages", None)
+
+        text_d = []
+        d = lst[-1]
+        who = d.get("role")
+        content = d.get("content")
+
+        s = ""
+        s += f"{who.upper()}:\n"
+        s += f"{content}\n"
+        s += "\n"
+
+        text_d.append(s)
+
+        res = lst
+
+        ret = {"ui": {"text": ["\n".join(text_d)]}, "result": [res]}
+
+        return ret
+
+
+@litellm_base
+class ShowMessages:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "messages": ("LLLM_MESSAGES", {"default": "Something to show..."}),
+            },
+            "optional": {
+                "list_display": ("STRING", {"multi_line": True, "default": ""}),
+            },
+        }
+
+    INPUT_IS_LIST = False
+    RETURN_TYPES = ("LLLM_MESSAGES",)
+    RETURN_NAMES = ("messages",)
+    INTERNAL_STATE_DISPLAY = "list_display"
+
+    # THIS IS BRYTHON CODE
+    INTERNAL_STATE = ""
+    FUNCTION = "handler"
+    OUTPUT_NODE = True
+    # OUTPUT_IS_LIST = (True,)
+    description = "Show list in browser"
+    CATEGORY = "utils"
+
+    def handler(self, **kwargs):
+        from copy import deepcopy
+        kwargs = deepcopy(kwargs)
+        """
+        input is list : List[List[str]]
+        Returns a dict to be displayed by the UI and passed to the next function
+        output like ret["ui"]["list"] needs to be a list of strings
+        output like ret["result"] should mirror the input
+
+        >>> ShowList.notify([["Hello", "world"], ["How", "are", "you?"]])
+        {'ui': {'list': ["Hello", "world", "How", "are", "you?"]}, 'result': [["Hello", "world"], ["How", "are", "you?"]]}
+
+        >>> ShowList.notify([])
+        {'ui': {'list': []}, 'result': []}
+        """
+        lst = kwargs.get("messages", None)
+        text_d = []
+        for d in lst:
+            who = d.get("role")
+            content = d.get("content")
+
+            s = ""
+            s += f"{who.upper()}:\n"
+            s += f"{content}\n"
+            s += "\n"
+
+            text_d.append(s)
+
+        res = lst
+
+        ret = {"ui": {"text": ["\n".join(text_d)]}, "result": [res]}
+
+        return ret
+
+
 @litellm_base
 class LiteLLMCompletionPrePend(LiteLLMCompletion):
     """just like LiteLLMCompletion but with a pre-pended prompt"""
@@ -214,11 +326,12 @@ class LiteLLMCompletionPrePend(LiteLLMCompletion):
         _ = base["required"].pop("prompt")
         base["required"]["prompt"] = ("STRING", {"default": "prompt", "multiline": True})
         return base
+
     RETURN_TYPES = LiteLLMCompletion.RETURN_TYPES
+
     def handler(self, **kwargs):
         kwargs["prompt"] = f"{kwargs['pre_prompt']}\n{kwargs['prompt']}"
         return super().handler(**kwargs)
-
 
 
 @litellm_base
