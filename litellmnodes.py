@@ -615,6 +615,116 @@ class LiteLLMMessage:
 
 
 @litellm_base
+class LLLMInterpretUrl:
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        ret = {"required": {
+            "url": ("STRING", {"multiline": False, "default": "http://127.0.0.1:3389/infer"}),
+            "get_what": (["text", "links", "urls", "article"],)
+        },
+            "optional": {
+                "headers": ("STRING", {"multiline": True, "default": "Content-Type:application/json"}),
+                "url_list": ("LIST", {"default": []})
+            }
+        }
+        return ret
+
+    RETURN_TYPES = ("STRING", "LIST",)
+    # FUNCTION = "http_get"
+
+    CATEGORY = "network"
+
+    def handler(self, url, headers=None, get_what="text", url_list=[]):
+        import asyncio
+        from aiohttp import ClientSession
+        from bs4 import BeautifulSoup
+        import time
+
+        dailymail = '<div itemprop="articleBody">'
+
+        async def fetch(url, session):
+            try:
+                async with session.get(url, timeout=10) as response:
+                    return await response.text()
+            except Exception as e:
+                return f"An error occurred: {e}"
+
+        async def get_all_links(url, session):
+            html = await fetch(url, session)
+            soup = BeautifulSoup(html, 'html.parser')
+            links = [f"(\"{a.string}\", \"{a['href']}\")" for a in soup.find_all('a', href=True)]
+            return "[\n" + ",\n".join(links) + "\n]"
+
+        async def get_all_visible_text(url, session):
+            html = await fetch(url, session)
+            soup = BeautifulSoup(html, 'html.parser')
+            try:
+                text = soup.body.get_text(separator=' ', strip=True)
+            except AttributeError:
+                text = soup.get_text(separator=' ', strip=True)
+
+            # also try to get the article text from the daily mail
+            if "dailymail.co.uk" in url:
+                try:
+                    text = soup.find("div", {"itemprop": "articleBody"}).get_text(separator=' ', strip=True)
+                except AttributeError:
+                    pass
+
+            return text
+
+        async def get_article_text(url, session):
+            import article_parser
+            html = await fetch(url, session)
+            title, content = article_parser.parse(html=html, output="markdown")
+            return f"{title}\n\n{content}"
+
+        async def bounded_fetch(sem, url, session):
+            async with sem:
+                if get_what == "text":
+                    return await get_all_visible_text(url, session)
+                elif get_what == "links":
+                    t = await get_all_links(url, session)
+                    return t
+                elif get_what == "article":
+                    return await get_article_text(url, session)
+                else:
+                    return "Invalid option"
+
+        async def run():
+            tasks = []
+            sem = asyncio.Semaphore(5)
+            async with ClientSession() as session:
+                for url in url_list:
+                    task = asyncio.ensure_future(bounded_fetch(sem, url, session))
+                    tasks.append(task)
+                responses = await asyncio.gather(*tasks)
+                return responses
+
+        if url_list == []:
+            url_list = [url]
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        ret = loop.run_until_complete(run())
+        loop.close()
+
+        for _ in range(0, len(url_list), 5):
+            time.sleep(10)  # sleep for 10 seconds
+
+        if len(ret) == 1:
+            if get_what == "text":
+                return (ret[0], ret,)
+            elif get_what == "links":
+                return (ret[0], eval(ret[0]),)
+            return (ret[0], ret,)
+        else:
+            if get_what == "text":
+                return ("\n".join(ret), ret,)
+            elif get_what == "links":
+                raise NotImplementedError
+            return ("\n".join(ret), ret,)
+
+@litellm_base
 class ListToMessages:
     """simply convert any list to messages check the for the correct keys in each message in the list"""
 
