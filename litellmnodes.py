@@ -310,7 +310,7 @@ class ShowMessages:
         res = lst
 
         out_list = ["\n".join(text_d)]
-        ret = {"ui": {"string":out_list}, "result": (res,)}
+        ret = {"ui": {"string": out_list}, "result": (res,)}
 
         return ret
 
@@ -724,9 +724,10 @@ class LLLMInterpretUrl:
                 raise NotImplementedError
             return ("\n".join(ret), ret,)
 
+
 @litellm_base
 class ListToMessages:
-    """simply convert any list to messages check the for the correct keys in each message in the list"""
+    """simply convert any list of messages check the for the correct keys in each message in the list"""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -748,3 +749,51 @@ class ListToMessages:
             if "role" not in message:
                 raise ValueError("Each message in the list must have a 'role' key")
         return (messages,)
+
+
+@litellm_base
+class MessagesToList:
+    """converts LLLM_MESSAGES to a list of messages"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "messages": ("LLLM_MESSAGES", {"default": []}),
+            },
+        }
+
+    RETURN_TYPES = ("LIST",)
+    RETURN_NAMES = ("Messages",)
+
+    def handler(self, messages):
+        if not messages:
+            return (messages,)
+        for message in messages:
+            if "content" not in message:
+                raise ValueError("Each message in the list must have a 'content' key")
+            if "role" not in message:
+                raise ValueError("Each message in the list must have a 'role' key")
+        return (messages,)
+
+
+@litellm_base
+class AppendMessages:
+    """
+    Appends messages to the existing messages
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "existing_messages": ("LLLM_MESSAGES", {"default": []}),
+                "new_messages": ("LLLM_MESSAGES", {"default": []}),
+            },
+        }
+
+    RETURN_TYPES = ("LLLM_MESSAGES",)
+    RETURN_NAMES = ("Messages",)
+
+    def handler(self, existing_messages, new_messages):
+        return (existing_messages + new_messages,)
