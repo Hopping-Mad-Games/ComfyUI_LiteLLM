@@ -358,6 +358,10 @@ class LiteLLMCompletionListOfPrompts:
     async def process_prompts(self, prompts, pre_prompt, **kwargs):
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
+        if "pre_prompt" in kwargs:
+            kwargs.pop("pre_prompt")
+        if "prompt" in kwargs:
+            kwargs.pop("prompt")
 
         loop = asyncio.get_running_loop()
         with ThreadPoolExecutor() as pool:
@@ -370,8 +374,8 @@ class LiteLLMCompletionListOfPrompts:
     def handler(self, **kwargs):
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
-        prompts = kwargs.get("prompts", ["Hello World!"])
-        pre_prompt = kwargs.get("pre_prompt", "Hello World!")
+        prompts = kwargs.pop("prompts", ["Hello World!"])
+        pre_prompt = kwargs.pop("pre_prompt", "Hello World!")
         completions = []
 
         if kwargs.get("async"):
