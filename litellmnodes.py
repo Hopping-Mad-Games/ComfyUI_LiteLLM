@@ -350,32 +350,35 @@ class LiteLLMCompletionListOfPrompts:
     RETURN_TYPES = ("LITELLM_MODEL", "LIST", "STRING",)
     RETURN_NAMES = ("Model", "Completions", "Usage",)
 
-    def handler(**kwargs):
+    def process_prompt(self, prompt, pre_prompt, **kwargs):
+        kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
+        model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
+        return completion
+
+    async def process_prompts(self, prompts, pre_prompt, **kwargs):
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor() as pool:
+            tasks = [
+                loop.run_in_executor(pool, self.process_prompt, prompt, pre_prompt, **kwargs)
+                for prompt in prompts
+            ]
+            return await asyncio.gather(*tasks)
+
+    def handler(self, **kwargs):
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         prompts = kwargs.get("prompts", ["Hello World!"])
         pre_prompt = kwargs.get("pre_prompt", "Hello World!")
         completions = []
 
-        def process_prompt(prompt, pre_prompt, **kwargs):
-            kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
-            model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
-            return completion
-
-        async def process_prompts(prompts, pre_prompt, **kwargs):
-            loop = asyncio.get_running_loop()
-            with ThreadPoolExecutor() as pool:
-                tasks = [
-                    loop.run_in_executor(pool, process_prompt, prompt, pre_prompt, **kwargs)
-                    for prompt in prompts
-                ]
-                return await asyncio.gather(*tasks)
-
         if kwargs.get("async"):
-            completions = asyncio.run(process_prompts(prompts, pre_prompt, **kwargs))
+            completions = asyncio.run(self.process_prompts(prompts, pre_prompt, **kwargs))
         else:
             for prompt in prompts:
-                completion = process_prompt(prompt, pre_prompt, **kwargs)
+                completion = self.process_prompt(prompt, pre_prompt, **kwargs)
                 completions.append(completion)
 
         return (kwargs.get("model"), completions, "",)
