@@ -843,6 +843,16 @@ class MessagesToText:
     RETURN_NAMES = ("Text",)
 
     def handler(self, messages):
+        delimiter = "\uFF1A"  # Fullwidth Colon (U+FF1A)
+        # Check if any message content contains the unique Unicode delimiter
+        for message in messages:
+            if delimiter in message['content']:
+                raise ValueError(f"Message content contains the delimiter {delimiter}")
+
+        # Convert messages to a single string
+        return ("\n".join([f"{m['role'].upper()}{delimiter} {m['content']}" for m in messages]),)
+
+    def handler(self, messages):
         return ("\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]),)
 
 
@@ -864,23 +874,20 @@ class TextToMessages:
     RETURN_NAMES = ("Messages",)
 
     def handler(self, text):
-        for l in text.split("\n"):
-            if ":" in l:
-                role, content = l.split(":", 1)
-                role = role.strip().lower()
-                content = content.strip()
-                if role not in ["user", "assistant", "system"]:
-                    raise ValueError(f"Invalid role: {role}")
-                if not content:
-                    raise ValueError("Content cannot be empty")
-            else:
-                raise ValueError("Invalid message format")
+        import re
+        delimiter = "\uFF1A"  # Fullwidth Colon (U+FF1A)
+        pattern = re.compile(rf'^(user|assistant|system){delimiter}\s*(.*)$', re.IGNORECASE | re.MULTILINE)
 
         ret = []
-        for l in text.split("\n"):
-            role, content = l.split(":", 1)
+        for match in pattern.finditer(text):
+            role, content = match.groups()
             role = role.strip().lower()
             content = content.strip()
+            if not content:
+                raise ValueError("Content cannot be empty")
             ret.append({"role": role, "content": content})
+
+        if not ret:
+            raise ValueError("Invalid message format")
 
         return (ret,)
