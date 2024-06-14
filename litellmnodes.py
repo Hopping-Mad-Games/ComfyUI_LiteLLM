@@ -823,3 +823,64 @@ class AppendMessages:
 
     def handler(self, existing_messages, new_messages):
         return (existing_messages + new_messages,)
+
+
+@litellm_base
+class MessagesToText:
+    """
+    Converts LLLM_MESSAGES to a single string
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "messages": ("LLLM_MESSAGES", {"default": []}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("Text",)
+
+    def handler(self, messages):
+        return ("\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]),)
+
+
+@litellm_base
+class TextToMessages:
+    """
+    Converts a string to a list of messages
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text": ("STRING", {"default": ""}),
+            },
+        }
+
+    RETURN_TYPES = ("LLLM_MESSAGES",)
+    RETURN_NAMES = ("Messages",)
+
+    def handler(self, text):
+        for l in text.split("\n"):
+            if ":" in l:
+                role, content = l.split(":", 1)
+                role = role.strip().lower()
+                content = content.strip()
+                if role not in ["user", "assistant", "system"]:
+                    raise ValueError(f"Invalid role: {role}")
+                if not content:
+                    raise ValueError("Content cannot be empty")
+            else:
+                raise ValueError("Invalid message format")
+
+        ret = []
+        for l in text.split("\n"):
+            role, content = l.split(":", 1)
+            role = role.strip().lower()
+            content = content.strip()
+            ret.append({"role": role, "content": content})
+
+        return (ret,)
