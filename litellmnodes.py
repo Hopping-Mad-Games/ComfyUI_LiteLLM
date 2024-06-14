@@ -350,6 +350,11 @@ class LiteLLMCompletionListOfPrompts:
     RETURN_TYPES = ("LITELLM_MODEL", "LIST", "STRING",)
     RETURN_NAMES = ("Model", "Completions", "Usage",)
 
+    async def async_process_prompt(self, prompt, pre_prompt, **kwargs):
+        kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
+        model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
+        return completion
+
     def process_prompt(self, prompt, pre_prompt, **kwargs):
         kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
         model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
@@ -357,23 +362,25 @@ class LiteLLMCompletionListOfPrompts:
 
     async def process_prompts(self, prompts, pre_prompt, **kwargs):
         import asyncio
-        from concurrent.futures import ThreadPoolExecutor
+
         if "pre_prompt" in kwargs:
             kwargs.pop("pre_prompt")
         if "prompt" in kwargs:
             kwargs.pop("prompt")
 
         loop = asyncio.get_running_loop()
-        with ThreadPoolExecutor() as pool:
-            tasks = [
-                loop.run_in_executor(pool, self.process_prompt, prompt, pre_prompt, **kwargs)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
+        # do not use ThreadPoolExecutor
+        tasks = []
+        for prompt in prompts:
+            task = loop.create_task(self.async_process_prompt(prompt, pre_prompt, **kwargs))
+            tasks.append(task)
+
+        completions = await asyncio.gather(*tasks)
+        return completions
 
     def handler(self, **kwargs):
         import asyncio
-        from concurrent.futures import ThreadPoolExecutor
+
         prompts = kwargs.pop("prompts", ["Hello World!"])
         pre_prompt = kwargs.pop("pre_prompt", "Hello World!")
         completions = []
