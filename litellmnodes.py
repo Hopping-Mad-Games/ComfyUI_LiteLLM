@@ -350,32 +350,35 @@ class LiteLLMCompletionListOfPrompts:
     RETURN_TYPES = ("LITELLM_MODEL", "LIST", "STRING",)
     RETURN_NAMES = ("Model", "Completions", "Usage",)
 
-    def handler(self, **kwargs):
-        import litellm
+    def handler(**kwargs):
         import asyncio
-
+        from concurrent.futures import ThreadPoolExecutor
         prompts = kwargs.get("prompts", ["Hello World!"])
-        completions = []
-        total_usage = {}
         pre_prompt = kwargs.get("pre_prompt", "Hello World!")
+        completions = []
 
-        async def process_prompt(prompt):
+        def process_prompt(prompt, pre_prompt, **kwargs):
             kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
-            model, messages, completion, usage = await asyncio.to_thread(LiteLLMCompletion().handler, **kwargs)
+            model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
             return completion
 
-        async def process_prompts():
-            return await asyncio.gather(*[process_prompt(prompt) for prompt in prompts])
+        async def process_prompts(prompts, pre_prompt, **kwargs):
+            loop = asyncio.get_running_loop()
+            with ThreadPoolExecutor() as pool:
+                tasks = [
+                    loop.run_in_executor(pool, process_prompt, prompt, pre_prompt, **kwargs)
+                    for prompt in prompts
+                ]
+                return await asyncio.gather(*tasks)
 
-        if kwargs["async"]:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            completions = loop.run_until_complete(process_prompts())
-            loop.close()
+        if kwargs.get("async"):
+            completions = asyncio.run(process_prompts(prompts, pre_prompt, **kwargs))
         else:
-            completions = [process_prompt(prompt).send() for prompt in prompts]
+            for prompt in prompts:
+                completion = process_prompt(prompt, pre_prompt, **kwargs)
+                completions.append(completion)
 
-        return (kwargs["model"], completions, "")
+        return (kwargs.get("model"), completions, "",)
 
 
 @litellm_base
