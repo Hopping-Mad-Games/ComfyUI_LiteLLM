@@ -350,10 +350,15 @@ class LiteLLMCompletionListOfPrompts:
     RETURN_TYPES = ("LITELLM_MODEL", "LIST", "STRING",)
     RETURN_NAMES = ("Model", "Completions", "Usage",)
 
-    async def async_process_prompt(self, prompt, pre_prompt, **kwargs):
+    def wrapped_llm_call(self, index, **kwargs):
+
+        return (index, LiteLLMCompletion().handler(**kwargs))
+
+    async def async_process_prompt(self, index, prompt, pre_prompt, **kwargs):
         kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
-        model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
-        return completion
+        idx, the_rest = self.wrapped_llm_call(index, **kwargs)
+        model, messages, completion, usage = the_rest
+        return idx, completion
 
     def process_prompt(self, prompt, pre_prompt, **kwargs):
         kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
@@ -369,13 +374,17 @@ class LiteLLMCompletionListOfPrompts:
             kwargs.pop("prompt")
 
         loop = asyncio.get_running_loop()
-        # do not use ThreadPoolExecutor
         tasks = []
-        for prompt in prompts:
-            task = loop.create_task(self.async_process_prompt(prompt, pre_prompt, **kwargs))
+        for i, prompt in enumerate(prompts):
+            task = loop.create_task(self.async_process_prompt(i, prompt, pre_prompt, **kwargs))
             tasks.append(task)
 
-        completions = await asyncio.gather(*tasks)
+        completions = [None] * len(prompts)
+        for coro in asyncio.as_completed(tasks):
+            completion = await coro
+            idx, completion = completion
+            completions[idx] = completion
+
         return completions
 
     def handler(self, **kwargs):
