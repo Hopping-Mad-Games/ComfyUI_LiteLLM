@@ -1,0 +1,15 @@
+[project]
+name = "comfyui_litellm"
+description = ""
+version = "1.0.0"
+license = "LICENSE"
+dependencies = ["pyyaml", "addict", "litellm", "boto3"]
+
+[project.urls]
+Repository = "https://github.com/Hopping-Mad-Games/ComfyUI_LiteLLM"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "ComfyUI_LiteLLM"
+Icon = ""
