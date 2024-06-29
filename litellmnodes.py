@@ -1,6 +1,10 @@
 import os
 import json
+import time
+import litellm
+from copy import deepcopy
 from . import config
+from .utils import safe_print, safe_error
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -37,9 +41,11 @@ class LiteLLMModelProvider:
                              "anthropic/claude-3-haiku-20240307",
                              "anthropic/claude-3-sonnet-20240229",
                              "anthropic/claude-3-opus-20240229",
+                             "anthropic/claude-3-5-sonnet-20240620",
                              "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
                              "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
                              "bedrock/anthropic.claude-3-opus-20240229-v1:0",
+                             "bedrock/anthropic.claude-3-5-sonnet-20240620",
                              "vertex_ai/gemini-1.5-pro-preview-0514",
                              "vertex_ai/gemini-1.5-flash-preview-0514",
                          ],
@@ -61,11 +67,10 @@ class LiteLLMModelProvider:
 
 
 @litellm_base
+@litellm_base
 class LiteLLMCompletion:
-    # Define the input types for the node
     @classmethod
     def INPUT_TYPES(cls):
-        # Inputs can be used to customize the default architecture
         return {
             "required": {
                 "model": ("LITELLM_MODEL", {"default": "anthropic/claude-3-haiku-20240307"}),
@@ -85,14 +90,9 @@ class LiteLLMCompletion:
     RETURN_TYPES = ("LITELLM_MODEL", "LLLM_MESSAGES", "STRING", "STRING",)
     RETURN_NAMES = ("Model", "Messages", "Completion", "Usage",)
 
-    # Method to provide the default LiteLLM model
     def handler(self, **kwargs):
-        import litellm
-        from copy import deepcopy
-        import time
         litellm.drop_params = True
 
-        # Update kwargs
         if kwargs["top_p"] == 0:
             kwargs["top_p"] = None
         if kwargs["temperature"] == 0:
@@ -102,7 +102,6 @@ class LiteLLMCompletion:
         if kwargs["presence_penalty"] == 0:
             kwargs["presence_penalty"] = None
 
-        # Extract all the necessary variables from the input
         model = kwargs.get('model', 'anthropic/claude-3-haiku-20240307')
         messages = kwargs.get('messages', [])
         messages = deepcopy(messages)
@@ -114,92 +113,72 @@ class LiteLLMCompletion:
         prompt = kwargs.get('prompt', "Hello World!")
         use_cached_response = kwargs.get('use_cached_response', False)
 
-        # append the prompt to the messages
         messages.append({"content": prompt, "role": "user"})
 
         import hashlib
-        # remove untracked params
         kwargs.pop('use_cached_response', None)
-        # create a unique id for the cache file
         unique_id = str(hashlib.sha256(json.dumps(kwargs).encode()).hexdigest())
-        # create a unique filename for the cache file
         cache_file_name = f'cached_response_{unique_id}.json'
-        # Define the path for the cached response
         cache_file_path = os.path.join(config.config_settings['tmp_dir'], cache_file_name)
 
         response = None
         cached_completion = False
 
-        if use_cached_response:
-            if os.path.exists(cache_file_path):
-                # Load the cached response
-                with open(cache_file_path, 'r') as file:
-                    response = json.load(file)
-                    response = litellm.ModelResponse(**response)
-                    cached_completion = True
+        if use_cached_response and os.path.exists(cache_file_path):
+            with open(cache_file_path, 'r') as file:
+                response = json.load(file)
+                response = litellm.ModelResponse(**response)
+                cached_completion = True
 
         if not response:
-            # Call the completion function with the extracted variables
             while not response:
                 try:
-                    litellm.drop_params = True
                     litellm.set_verbose = True
-                    response = litellm.completion(model=model,
-                                                  messages=messages,
-                                                  stream=False,
-                                                  max_tokens=max_tokens,
-                                                  temperature=temperature,
-                                                  top_p=top_p,
-                                                  frequency_penalty=frequency_penalty,
-                                                  presence_penalty=presence_penalty,
-                                                  )
+                    response = litellm.completion(
+                        model=model,
+                        messages=messages,
+                        stream=False,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        frequency_penalty=frequency_penalty,
+                        presence_penalty=presence_penalty,
+                    )
                 except litellm.exceptions.RateLimitError as e:
-                    print(f"Rate limit error: {e}")
+                    safe_print(f"Rate limit error: {safe_error(e)}")
                     time.sleep(5)
                     continue
+                except Exception as e:
+                    safe_print(f"An error occurred: {safe_error(e)}")
+                    raise
 
         response_choices = response.choices
         response_first_choice = response_choices[0]
         response_first_choice_message = response_first_choice.message
-        response_first_choice_message_content = response_first_choice_message.content
+        response_content = response_first_choice_message.content or ""
 
-        response_content = response_first_choice_message_content or ""
-
-        # first check if the tmp directory exists
         if not os.path.exists(config.config_settings['tmp_dir']):
             os.makedirs(config.config_settings['tmp_dir'])
 
-        # delete the file if it exists
         if os.path.exists(cache_file_path):
             os.remove(cache_file_path)
-        # Save the response to the cache file
         with open(cache_file_path, 'w') as file:
-            jsn = response.json()
-            json.dump(jsn, file, indent=4)
+            json.dump(response.json(), file, indent=4)
 
-        # now update message with the response
         messages.append({"content": response_content, "role": response_first_choice_message.role})
 
-        # Extract the usage information from the response
         d = response.usage.model_extra
         lines = [f"{k}:{v}" for k, v in d.items()]
         usage = "\n".join(lines)
 
         if cached_completion:
             top = "cached response used\n"
-            # make top bright green
             top = f"\033[1;32;40m{top}\033[0m"
             usage = top + usage
-
         else:
             top = "new result generated\n"
-            # text color is 30-37 for black, red, green, yellow, blue, magenta, cyan, white
-            # background color is 40-47 for black, red, green, yellow, blue, magenta, cyan, white
             top = f"\033[1;31;40m{top}\033[0m"
-
             usage = top + usage
-
-        # print(usage)
 
         return (model, messages, response_content, usage,)
 
