@@ -1,6 +1,6 @@
 [project]
 name = "comfyui_litellm"
-description = ""
+description = "Nodes for calling LLMs, enabled by LiteLLM"
 version = "1.0.0"
 license = "LICENSE"
 dependencies = ["pyyaml", "addict", "litellm", "boto3"]
@@ -10,6 +10,6 @@ Repository = "https://github.com/Hopping-Mad-Games/ComfyUI_LiteLLM"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "@hmg"
 DisplayName = "ComfyUI_LiteLLM"
-Icon = ""
+Icon = "https://avatars.githubusercontent.com/u/154278219?s=48&v=4"
