@@ -13,32 +13,32 @@ app.registerExtension({
 					? onNodeCreated.apply(this, arguments)
 					: undefined;
 
-				let ShowText = app.graph._nodes.filter(
-						(wi) => wi.type == nodeData.name
-					),
-					nodeName = `${nodeData.name}_${ShowText.length}`;
+				// let ShowText = app.graph._nodes.filter(
+				// 		(wi) => wi.type == nodeData.name
+				// 	),
+				// 	nodeName = `${nodeData.name}_${ShowText.length}`;
 
-				const wi = ComfyWidgets.STRING(
-					this,
-					nodeName,
-					[
-						"STRING",
-						{
-							default: "",
-							placeholder: "Text output...",
-							multiline: true,
-						},
-					],
-					app
-				);
-				wi.widget.inputEl.readOnly = true;
+				// const wi = ComfyWidgets.STRING(
+				// 	this,
+				// 	nodeName,
+				// 	[
+				// 		"STRING",
+				// 		{
+				// 			default: "",
+				// 			placeholder: "Text output...",
+				// 			multiline: true,
+				// 		},
+				// 	],
+				// 	app
+				// );
+				// wi.widget.inputEl.readOnly = true;
 				return ret;
 			};
 			// Function set value
 			const outSet = function (texts) {
 				if (texts.length > 0) {
 					let widget_id = this?.widgets.findIndex(
-						(w) => w.type == "customtext"
+						(w) => w.name == "list_display"
 					);
 
 					if (Array.isArray(texts))

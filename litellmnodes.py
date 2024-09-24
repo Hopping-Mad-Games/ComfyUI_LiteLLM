@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import os
 import json
 import time
@@ -29,6 +31,30 @@ def litellm_base(cls):
 
 
 @litellm_base
+class HTMLRenderer:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "html_content": ("STRING", {"multiline": True}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "handler"
+    OUTPUT_NODE = True
+
+    def handler(self, html_content):
+        tmplt = """<iframe srcdoc="{html_content}" style="width:100%; height:800px; border:none;"></iframe>"""
+        # Replace newlines and double quotes in the raw HTML
+        y = tmplt.format(html_content=html_content.replace("\n", "").replace('"', '&quot;'))
+        html_content = y
+
+        ret = {"ui": {"string": [html_content]}, "result": (html_content,)}
+        return ret
+
+
+@litellm_base
 class LiteLLMModelProvider:
     # Define the input types for the node
     @classmethod
@@ -48,6 +74,11 @@ class LiteLLMModelProvider:
                              "bedrock/anthropic.claude-3-5-sonnet-20240620",
                              "vertex_ai/gemini-1.5-pro-preview-0514",
                              "vertex_ai/gemini-1.5-flash-preview-0514",
+                             "vertex_ai/meta/llama3-405b-instruct-maas",
+                             "openai/gpt-4o-mini",
+                             "openai/gpt-4o",
+                             "openai/gpt-4o-2024-08-06",
+
                          ],
 
                          {"default": "anthropic/claude-3-haiku-20240307"}),
@@ -67,6 +98,121 @@ class LiteLLMModelProvider:
 
 
 @litellm_base
+class AddDataModelToLLLm:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("LITELLM_MODEL", {"default": "anthropic/claude-3-haiku-20240307"}),
+            },
+            "optional": {
+                "code": (
+                    "STRING",
+                    {"default": "class UserModel(BaseModel):\n    name: str= Field(..., description='The name of the "
+                                "person')\n    age: int\n", "multiline": True}),
+                "data_model": ("data_model", {"default": None}),
+            }
+        }
+
+    RETURN_TYPES = ("LITELLM_MODEL",)
+    RETURN_NAMES = ("Litellm model",)
+
+    def restricted_exec(self, code: str):
+        from pydantic import BaseModel, Field, conlist
+        from typing import Tuple
+
+        # Define a restricted global namespace
+        restricted_globals = {
+            "__builtins__": {
+                "print": print,
+                "range": range,
+                "len": len,
+                "__build_class__": __build_class__,  # Include __build_class__ for class definitions
+                "str": str,
+                "int": int,
+                "float": float,
+                "bool": bool,
+                "list": list,
+                "dict": dict,
+                "set": set,
+                "tuple": tuple,
+                "Tuple": Tuple,
+                # Add other built-in types as needed
+            },
+            "__name__": "__main__",  # Define __name__ to simulate normal execution context
+            "BaseModel": BaseModel,  # Explicitly allow BaseModel from pydantic
+            "Field": Field,  # Explicitly allow Field to define field descriptions
+            "conlist": conlist  # Explicitly allow conlist to define list constraints
+        }
+
+        # Execute the code with restricted globals
+        exec(code, restricted_globals)
+
+        # Extract the created model from the restricted_globals
+        # Assuming the user will name their model 'UserModel'
+        user_model = restricted_globals.get("UserModel")
+        if user_model is None:
+            raise ValueError("No model named 'UserModel' was defined in the provided code.")
+        return user_model
+
+    def handler(self, model, code=None, data_model=None):
+        use_data_model = None
+        # first figure out the data_model
+        if data_model is not None:
+            use_data_model = data_model
+        elif isinstance(code, str):
+            use_data_model = self.restricted_exec(code)
+
+        if isinstance(model, dict):
+            model["kwargs"]["response_format"] = use_data_model
+        elif isinstance(model, str):
+            model = {"model": model,
+                     "type": "kwargs",
+                     "kwargs": {"response_format": use_data_model}
+                     }
+
+        return (model,)
+
+
+@litellm_base
+class ModifyModelKwargs:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("LITELLM_MODEL", {"default": "anthropic/claude-3-haiku-20240307"}),
+            },
+            "optional": {
+                "kwargs": ("DICT", {"default": {}}),
+                "json_str_of_kwargs": ("STRING", {"default": "{}", "multiline": True}),
+            }
+        }
+
+    RETURN_TYPES = ("LITELLM_MODEL",)
+    RETURN_NAMES = ("Litellm model",)
+
+    def handler(self, model, kwargs={}, json_str_of_kwargs={}, data_model=None):
+        import json
+
+        if json_str_of_kwargs != "{}":
+            kwargs = json.loads(json_str_of_kwargs)
+
+        if "logit_bias" in kwargs:
+            if isinstance(kwargs["logit_bias"], list):
+                l_logits = kwargs["logit_bias"]
+                set_logits = dict()
+                for id, p in l_logits:
+                    set_logits[str(id)] = int(p)
+                kwargs["logit_bias"] = set_logits
+
+        if isinstance(model, dict):
+            model["kwargs"].update(kwargs)
+        elif isinstance(model, str):
+            model = {"model": model, "type": "kwargs", "kwargs": kwargs}
+
+        return (model,)
+
+
 @litellm_base
 class LiteLLMCompletion:
     @classmethod
@@ -91,7 +237,11 @@ class LiteLLMCompletion:
     RETURN_NAMES = ("Model", "Messages", "Completion", "Usage",)
 
     def handler(self, **kwargs):
+        from copy import deepcopy
         litellm.drop_params = True
+        kwargs = deepcopy(kwargs)
+        model = kwargs.get('model', 'anthropic/claude-3-haiku-20240307')
+        out_model = deepcopy(kwargs.get('model', 'anthropic/claude-3-haiku-20240307'))
 
         if kwargs["top_p"] == 0:
             kwargs["top_p"] = None
@@ -102,7 +252,16 @@ class LiteLLMCompletion:
         if kwargs["presence_penalty"] == 0:
             kwargs["presence_penalty"] = None
 
-        model = kwargs.get('model', 'anthropic/claude-3-haiku-20240307')
+        if isinstance(kwargs["model"], dict):
+            _model = model.get("model", "anthropic/claude-3-haiku-20240307")
+            _type = model.get("type", None)
+            if _type:
+                if _type == "kwargs":
+                    _kwargs = model.get("kwargs", {})
+                    kwargs.update(_kwargs)
+                    kwargs["model"] = _model
+            model = _model
+
         messages = kwargs.get('messages', [])
         messages = deepcopy(messages)
         max_tokens = kwargs.get('max_tokens', None)
@@ -110,14 +269,18 @@ class LiteLLMCompletion:
         top_p = kwargs.get('top_p', None)
         frequency_penalty = kwargs.get('frequency_penalty', None)
         presence_penalty = kwargs.get('presence_penalty', None)
-        prompt = kwargs.get('prompt', "Hello World!")
+        prompt = kwargs.pop('prompt', "Hello World!")
         use_cached_response = kwargs.get('use_cached_response', False)
 
         messages.append({"content": prompt, "role": "user"})
+        kwargs["messages"] = messages
 
         import hashlib
         kwargs.pop('use_cached_response', None)
-        unique_id = str(hashlib.sha256(json.dumps(kwargs).encode()).hexdigest())
+        uid_kwargs = kwargs.copy()
+        uid_kwargs["prompt"] = prompt
+
+        unique_id = str(hashlib.sha256(json.dumps(uid_kwargs).encode()).hexdigest())
         cache_file_name = f'cached_response_{unique_id}.json'
         cache_file_path = os.path.join(config.config_settings['tmp_dir'], cache_file_name)
 
@@ -133,17 +296,24 @@ class LiteLLMCompletion:
         if not response:
             while not response:
                 try:
-                    litellm.set_verbose = True
+                    litellm.set_verbose: True
+
+                    n_kwargs = {
+                        "model": model,
+                        "messages": messages,
+                        "stream": False,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                        "frequency_penalty": frequency_penalty,
+                        "presence_penalty": presence_penalty
+                    }
+                    n_kwargs.update(kwargs)
+
                     response = litellm.completion(
-                        model=model,
-                        messages=messages,
-                        stream=False,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        frequency_penalty=frequency_penalty,
-                        presence_penalty=presence_penalty,
+                        **n_kwargs
                     )
+
                 except litellm.exceptions.RateLimitError as e:
                     safe_print(f"Rate limit error: {safe_error(e)}")
                     time.sleep(5)
@@ -167,9 +337,12 @@ class LiteLLMCompletion:
 
         messages.append({"content": response_content, "role": response_first_choice_message.role})
 
-        d = response.usage.model_extra
-        lines = [f"{k}:{v}" for k, v in d.items()]
-        usage = "\n".join(lines)
+        try:
+            d = response.usage.model_extra
+            lines = [f"{k}:{v}" for k, v in d.items()]
+            usage = "\n".join(lines)
+        except Exception as e:
+            usage = ""
 
         if cached_completion:
             top = "cached response used\n"
@@ -180,7 +353,365 @@ class LiteLLMCompletion:
             top = f"\033[1;31;40m{top}\033[0m"
             usage = top + usage
 
-        return (model, messages, response_content, usage,)
+        return (out_model, messages, response_content, usage,)
+
+
+import os
+import json
+import hashlib
+import time
+import base64
+from copy import deepcopy
+import litellm
+import torch
+from PIL import Image
+from io import BytesIO
+
+
+@litellm_base
+class LitellmCompletionV2:
+
+    @classmethod
+    def get_valid_tasks(cls):
+        # Ideally, fetch this list dynamically from LiteLLM documentation or API
+        return ["transcription", "classification", "completion", "translation", "summarization", "image_captioning",
+                "object_detection"]
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        valid_tasks = cls.get_valid_tasks()
+        return {
+            "required": {
+                "model": ("LITELLM_MODEL", {"default": "anthropic/claude-3.5-sonnet"}),
+                "max_tokens": ("INT", {"default": 250, "min": 1, "max": 1e10, "step": 1}),
+                "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "top_p": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "frequency_penalty": ("FLOAT", {"default": 0}),
+                "presence_penalty": ("FLOAT", {"default": 0}),
+                "prompt": ("STRING", {"default": "Hello World!", "multiline": True}),
+                "task": (valid_tasks, {"default": "completion"})  # Use a dropdown list for valid tasks
+            },
+            "optional": {
+                "image": ("IMAGE", {"default": None}),  # Assuming image_tensor is the PyTorch tensor
+                "messages": ("LLLM_MESSAGES", {"default": None}),
+                "use_cached_response": ("BOOLEAN", {"default": False}),
+            }
+        }
+
+    RETURN_TYPES = ("LITELLM_MODEL", "LLLM_MESSAGES", "STRING", "LIST", "STRING",)
+    RETURN_NAMES = ("Model", "Messages", "Completion", "[Completions]", "Usage",)
+
+    def tensor_image_to_base64(self, tensor):
+        tensor = tensor.mul(255).byte()  # Convert to 0-255
+        image = Image.fromarray(tensor.numpy())
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=100)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    def tensor_image_stack_to_base64(self, tensor):
+        b, h, w, c = tensor.shape
+        out = []
+        for i in range(b):
+            img = self.tensor_image_to_base64(tensor[i])
+            img_data = self.get_image_data(img)
+            out.append(img_data)
+
+        return out
+
+    def get_image_data(self, base64_image):
+        image_data = {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/jpeg;base64," + base64_image
+            }
+        }
+        return image_data
+
+    def handler(self, **kwargs):
+        from pydantic import BaseModel
+        from copy import deepcopy
+        kwargs = deepcopy(kwargs)
+        litellm.drop_params = True
+        single_response = True
+        task = kwargs.get('task', "transcription")
+        image = kwargs.get('image', None)
+
+        # Validate the task
+        valid_tasks = self.get_valid_tasks()
+        if task not in valid_tasks:
+            raise ValueError(f"Invalid task '{task}'. Valid tasks are: {valid_tasks}")
+
+            # Optional parameters handling
+        if kwargs["top_p"] == 0:
+            kwargs["top_p"] = None
+        if kwargs["temperature"] == 0:
+            kwargs["temperature"] = None
+        if kwargs["frequency_penalty"] == 0:
+            kwargs["frequency_penalty"] = None
+        if kwargs["presence_penalty"] == 0:
+            kwargs["presence_penalty"] = None
+
+        prompt = kwargs.get('prompt', "Hello World!")
+
+        # Get input parameters
+        model = kwargs.get('model', 'anthropic/claude-3.5-sonnet')
+        messages = kwargs.get('messages', [])
+        messages.append({"role": "user", "content": prompt})
+        messages = deepcopy(messages)
+
+        max_tokens = kwargs.get('max_tokens', None)
+        temperature = kwargs.get('temperature', None)
+        top_p = kwargs.get('top_p', None)
+        frequency_penalty = kwargs.get('frequency_penalty', None)
+        presence_penalty = kwargs.get('presence_penalty', None)
+
+        use_cached_response = kwargs.get('use_cached_response', False)
+
+        # Cache handling setup
+        kwargs.pop('use_cached_response', None)
+        kwargs.pop('image', None)
+        mdl_cls = None
+        if "response_format" in kwargs["model"]["kwargs"]:
+            if kwargs["model"]["kwargs"]["response_format"].__name__ == "UserModel":
+                mdl_cls = kwargs["model"]["kwargs"]["response_format"]
+                kwargs["model"]["kwargs"]["response_format"] = mdl_cls.schema_json()
+
+        unique_id = str(hashlib.sha256(json.dumps(kwargs).encode()).hexdigest())
+
+        if mdl_cls:
+            kwargs["model"]["kwargs"]["response_format"] = mdl_cls
+
+        cache_file_name = f'cached_response_{unique_id}.json'
+        cache_file_path = os.path.join(config.config_settings['tmp_dir'], cache_file_name)
+
+        response = None
+        cached_completion = False
+
+        responses = None
+        # Check for cached response
+        if use_cached_response and os.path.exists(cache_file_path):
+            try:
+                with open(cache_file_path, 'r') as file:
+                    responses = json.load(file)
+                    responses_out = []
+                    if isinstance(responses, list):
+                        for r in responses:
+                            responses_out.append(litellm.ModelResponse(**r))
+                        responses = responses_out
+                        cached_completion = True
+                    else:
+                        responses = None
+                        print("cached response not a list.")
+            except Exception as e:
+                print(f"Error loading cached response: {e}")
+                responses = None
+        base64_images = [None]
+        # Encode image to base64 if the task requires image processing
+        if task in ["transcription", "classification", "image_captioning", "object_detection"]:
+            base64_images = self.tensor_image_stack_to_base64(image)
+            if len(base64_images) > 1:
+                single_response = False
+
+        if not responses:
+            responses = []
+            for id in base64_images:
+                response = None
+                while not response:
+                    try:
+                        if id:
+                            response = self.litellm_completion_v2_inner(frequency_penalty, max_tokens, messages, model,
+                                                                        presence_penalty,
+                                                                        prompt, task, temperature, top_p, id)
+                        else:
+                            response = self.litellm_completion_v2_inner(frequency_penalty, max_tokens, messages, model,
+                                                                        presence_penalty,
+                                                                        prompt, task, temperature, top_p)
+
+                        response_choices = response.choices
+                        response_first_choice = response_choices[0]
+                        response_first_choice_message = response_first_choice.message
+                        response_content = response_first_choice_message.content or ""
+                        responses.append(response_content)
+                    except litellm.BadRequestError as e:
+                        print(f"Bad request error: {e}")
+                        break
+                    except Exception as e:
+                        print(f"An error occurred: {e}")
+
+        if not os.path.exists(config.config_settings['tmp_dir']):
+            os.makedirs(config.config_settings['tmp_dir'])
+
+        if os.path.exists(cache_file_path):
+            os.remove(cache_file_path)
+        with open(cache_file_path, 'w') as file:
+            json.dump(responses, file, indent=4)
+
+        usage = ""
+        if single_response:
+            messages.append({"content": response_content, "role": response_first_choice_message.role})
+
+            try:
+                d = response.usage.model_extra
+                lines = [f"{k}:{v}" for k, v in d.items()]
+                usage = "\n".join(lines)
+            except Exception as e:
+                usage = ""
+
+        if cached_completion:
+            top = "cached response used\n"
+            top = f"\033[1;32;40m{top}\033[0m"
+            usage = top + usage
+        else:
+            top = "new result generated\n"
+            top = f"\033[1;31;40m{top}\033[0m"
+            usage = top + usage
+
+        return (model, messages, responses[0], responses, usage,)
+
+    def litellm_completion_v2_inner(self, frequency_penalty, max_tokens, messages, model, presence_penalty, prompt,
+                                    task, temperature, top_p, image_data=None):
+        import json
+        # content = [{"type": "text", "text": prompt},image_data]
+        # content = [{"type": "text", "text": prompt}, image_data]
+        try:
+            litellm.set_verbose = True
+            if task in ["transcription", "classification", "image_captioning",
+                        "object_detection"]:  # Tasks that require vision API
+                response = litellm.completion(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    presence_penalty=presence_penalty,
+                )
+            else:  # Other tasks
+                base_schema = {
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "video_script_structure",
+                            "strict": True,
+                            "schema": {
+                                "$schema": "http://json-schema.org/draft-07/schema#",
+                                "type": "object",
+                                "additionalProperties": False
+                            }
+                        }
+                    }
+                }
+
+                use_kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "frequency_penalty": frequency_penalty,
+                    "presence_penalty": presence_penalty,
+                    "prompt": prompt
+                }
+
+                if isinstance(model, dict):
+                    if "kwargs" in model:
+                        use_kwargs.update(model["kwargs"])
+                        if "response_format" in use_kwargs:
+                            base_scm_use = base_schema.copy()
+                            scm = use_kwargs["response_format"].schema()
+                            base_scm_use["response_format"]["json_schema"]["schema"].update(scm)
+                            use_kwargs["response_format"] = json.dumps(base_scm_use["response_format"])
+
+                            # fix model string
+                            use_kwargs["model"] = use_kwargs["model"]["model"]
+                            use_kwargs.pop("prompt")
+                            ob = json.loads(use_kwargs["response_format"])
+
+                            if "$defs" in ob["json_schema"]["schema"]:
+                                defs = ob["json_schema"]["schema"]["$defs"]
+                                for k, v in defs.items():
+                                    v["additionalProperties"] = False
+
+                            use_kwargs["response_format"] = ob
+
+                response = litellm.completion(
+                    **use_kwargs
+                )
+        except litellm.exceptions.RateLimitError as e:
+            print(f"Rate limit error: {e}")
+            time.sleep(5)
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise
+        return response
+
+
+@litellm_base
+class PDFToImageNode:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pdf_path": ("STRING", {"default": "path/to/your/pdf/file.pdf"}),
+                "dpi": ("INT", {"default": 200, "min": 72, "max": 600}),
+                "first_page": ("INT", {"default": 1, "min": 1}),
+                "last_page": ("INT", {"default": -1}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+
+    def convert_from_path(self, pdf_path, dpi=200, first_page=1, last_page=-1, output_folder=None):
+        import pdfplumber
+
+        if last_page == 0:
+            last_page = -1
+        out = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for i, page in enumerate(pdf.pages):
+                if i < first_page - 1:
+                    continue
+                if last_page > 0 and i >= last_page:
+                    break
+
+                pil_image = page.to_image(resolution=dpi)
+                out.append(pil_image)
+        return out
+
+    def handler(self, pdf_path, dpi, first_page, last_page):
+        import os
+        import tempfile
+        import numpy as np
+
+        if not os.path.exists(pdf_path):
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            images = self.convert_from_path(pdf_path, dpi=dpi, first_page=first_page,
+                                            last_page=last_page, output_folder=temp_dir)
+            images = [i.original for i in images]
+            # Convert PIL Images to torch tensors
+            tensor_images = []
+            for img in images:
+                # Convert PIL Image to RGB mode
+                img_rgb = img.convert('RGB')
+                # Convert to numpy array and normalize
+                np_image = np.array(img_rgb).astype(np.float32) / 255.0
+                # Convert to torch tensor and add batch dimension
+                tensor_image = torch.from_numpy(np_image).unsqueeze(0)
+                tensor_images.append(tensor_image)
+
+            # Stack all images into a single tensor
+            batch_images = torch.cat(tensor_images, dim=0)
+
+        # The output tensor is in the format [B, H, W, C], where:
+        # B: Batch size (number of pages)
+        # H: Height of each image
+        # W: Width of each image
+        # C: Number of channels (3 for RGB)
+        # Values are normalized to the range 0.0 to 1.0
+        return (batch_images,)
 
 
 @litellm_base
@@ -192,17 +723,17 @@ class ShowLastMessage:
                 "messages": ("LLLM_MESSAGES", {"default": "Something to show..."}),
             },
             "optional": {
-                "list_display": ("STRING", {"multi_line": True, "default": ""}),
+                "list_display": ("STRING", {"multiline": True, "default": ""}),
             },
         }
 
     INPUT_IS_LIST = False
     RETURN_TYPES = ("LLLM_MESSAGES",)
     RETURN_NAMES = ("messages",)
-    INTERNAL_STATE_DISPLAY = "list_display"
+    # INTERNAL_STATE_DISPLAY = "list_display"
 
     # THIS IS BRYTHON CODE
-    INTERNAL_STATE = ""
+    # INTERNAL_STATE = ""
     FUNCTION = "handler"
     OUTPUT_NODE = True
     # OUTPUT_IS_LIST = (True,)
@@ -309,7 +840,8 @@ class LiteLLMCompletionPrePend(LiteLLMCompletion):
     RETURN_TYPES = LiteLLMCompletion.RETURN_TYPES
 
     def handler(self, **kwargs):
-        kwargs["prompt"] = f"{kwargs['pre_prompt']}\n{kwargs['prompt']}"
+        pp = kwargs.pop("pre_prompt", None)
+        kwargs["prompt"] = f"{pp}\n{kwargs['prompt']}"
         return super().handler(**kwargs)
 
 
@@ -330,12 +862,16 @@ class LiteLLMCompletionListOfPrompts:
     RETURN_NAMES = ("Model", "Completions", "Usage",)
 
     def wrapped_llm_call(self, index, **kwargs):
-
         return (index, LiteLLMCompletion().handler(**kwargs))
 
     async def async_process_prompt(self, index, prompt, pre_prompt, **kwargs):
+        import asyncio
+        import functools
+
         kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
-        idx, the_rest = self.wrapped_llm_call(index, **kwargs)
+        loop = asyncio.get_running_loop()
+        partial_func = functools.partial(self.wrapped_llm_call, index, **kwargs)
+        idx, the_rest = await loop.run_in_executor(None, partial_func)
         model, messages, completion, usage = the_rest
         return idx, completion
 
@@ -352,29 +888,27 @@ class LiteLLMCompletionListOfPrompts:
         if "prompt" in kwargs:
             kwargs.pop("prompt")
 
-        loop = asyncio.get_running_loop()
-        tasks = []
-        for i, prompt in enumerate(prompts):
-            task = loop.create_task(self.async_process_prompt(i, prompt, pre_prompt, **kwargs))
-            tasks.append(task)
-
-        completions = [None] * len(prompts)
-        for coro in asyncio.as_completed(tasks):
-            completion = await coro
-            idx, completion = completion
-            completions[idx] = completion
-
-        return completions
+        tasks = [self.async_process_prompt(i, prompt, pre_prompt, **kwargs) for i, prompt in enumerate(prompts)]
+        completions = await asyncio.gather(*tasks)
+        return [completion for _, completion in sorted(completions, key=lambda x: x[0])]
 
     def handler(self, **kwargs):
         import asyncio
-
         prompts = kwargs.pop("prompts", ["Hello World!"])
         pre_prompt = kwargs.pop("pre_prompt", "Hello World!")
         completions = []
 
-        if kwargs.get("async"):
-            completions = asyncio.run(self.process_prompts(prompts, pre_prompt, **kwargs))
+        if kwargs.pop("async", None):
+            # Create a new event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            try:
+                # Run the async code in the loop
+                completions = loop.run_until_complete(self.process_prompts(prompts, pre_prompt, **kwargs))
+            finally:
+                # Ensure the loop is closed
+                loop.close()
         else:
             for prompt in prompts:
                 completion = self.process_prompt(prompt, pre_prompt, **kwargs)
