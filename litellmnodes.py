@@ -299,8 +299,12 @@ class LiteLLMCompletion:
         kwargs.pop('use_cached_response', None)
         uid_kwargs = kwargs.copy()
         uid_kwargs["prompt"] = prompt
+        if "response_model" in kwargs:
+            uid_kwargs["response_model"] = str(kwargs.pop("response_model"))
 
         unique_id = str(hashlib.sha256(json.dumps(uid_kwargs).encode()).hexdigest())
+        del uid_kwargs
+
         cache_file_name = f'cached_response_{unique_id}.json'
         cache_file_path = os.path.join(config.config_settings['tmp_dir'], cache_file_name)
 
