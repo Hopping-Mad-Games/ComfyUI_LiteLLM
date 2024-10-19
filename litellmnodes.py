@@ -471,10 +471,11 @@ class LitellmCompletionV2:
         kwargs.pop('use_cached_response', None)
         kwargs.pop('image', None)
         mdl_cls = None
-        if "response_format" in kwargs["model"]["kwargs"]:
-            if kwargs["model"]["kwargs"]["response_format"].__name__ == "UserModel":
-                mdl_cls = kwargs["model"]["kwargs"]["response_format"]
-                kwargs["model"]["kwargs"]["response_format"] = mdl_cls.schema_json()
+        if isinstance(kwargs["model"], dict):
+            if "response_format" in kwargs["model"]["kwargs"]:
+                if kwargs["model"]["kwargs"]["response_format"].__name__ == "UserModel":
+                    mdl_cls = kwargs["model"]["kwargs"]["response_format"]
+                    kwargs["model"]["kwargs"]["response_format"] = mdl_cls.schema_json()
 
         unique_id = str(hashlib.sha256(json.dumps(kwargs).encode()).hexdigest())
 
