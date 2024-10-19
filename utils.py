@@ -37,7 +37,7 @@ def safe_error(error):
     Safely format an error message, masking any sensitive data.
     """
     return mask_sensitive_data(str(error))
-
+from pydantic import BaseModel
 
 class CustomDict(dict):
     def every_value_str(self):

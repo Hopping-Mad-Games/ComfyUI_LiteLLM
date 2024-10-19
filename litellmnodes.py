@@ -296,7 +296,7 @@ class LiteLLMCompletion:
         kwargs["messages"] = messages
 
         import hashlib
-        from utils import CustomDict
+        from .utils import CustomDict
         kwargs.pop('use_cached_response', None)
         uid_kwargs = CustomDict()
         uid_kwargs.update(kwargs.copy())
