@@ -119,7 +119,7 @@ class AddDataModelToLLLm:
 
     def restricted_exec(self, code: str):
         from pydantic import BaseModel, Field, conlist
-        from typing import Tuple
+        from typing import Tuple, List, Dict, Set, Any, Callable, Union, Optional, Iterable, Iterator, Generator
 
         # Define a restricted global namespace
         restricted_globals = {
