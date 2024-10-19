@@ -296,11 +296,12 @@ class LiteLLMCompletion:
         kwargs["messages"] = messages
 
         import hashlib
+        from utils import CustomDict
         kwargs.pop('use_cached_response', None)
-        uid_kwargs = kwargs.copy()
+        uid_kwargs = CustomDict()
+        uid_kwargs.update(kwargs.copy())
         uid_kwargs["prompt"] = prompt
-        if "response_model" in kwargs:
-            uid_kwargs["response_model"] = str(kwargs.pop("response_model"))
+        uid_kwargs = str(uid_kwargs.every_value_str())
 
         unique_id = str(hashlib.sha256(json.dumps(uid_kwargs).encode()).hexdigest())
         del uid_kwargs
