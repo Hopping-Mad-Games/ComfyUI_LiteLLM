@@ -124,20 +124,40 @@ class AddDataModelToLLLm:
         # Define a restricted global namespace
         restricted_globals = {
             "__builtins__": {
+                # Basic functions
                 "print": print,
                 "range": range,
                 "len": len,
-                "__build_class__": __build_class__,  # Include __build_class__ for class definitions
+                "__build_class__": __build_class__,  # For class definitions
+
+                # Primitive types
                 "str": str,
                 "int": int,
                 "float": float,
                 "bool": bool,
+                "complex": complex,
+
+                # Collection types
                 "list": list,
                 "dict": dict,
                 "set": set,
                 "tuple": tuple,
+                "frozenset": frozenset,
+                "bytes": bytes,
+                "bytearray": bytearray,
+
+                # Typing counterparts
                 "Tuple": Tuple,
-                # Add other built-in types as needed
+                "List": List,
+                "Dict": Dict,
+                "Set": Set,
+                "Any": Any,
+                "Callable": Callable,
+                "Union": Union,
+                "Optional": Optional,
+                "Iterable": Iterable,
+                "Iterator": Iterator,
+                "Generator": Generator,
             },
             "__name__": "__main__",  # Define __name__ to simulate normal execution context
             "BaseModel": BaseModel,  # Explicitly allow BaseModel from pydantic
