@@ -596,9 +596,20 @@ class LitellmCompletionV2:
 
     def litellm_completion_v2_inner(self, frequency_penalty, max_tokens, messages, model, presence_penalty, prompt,
                                     task, temperature, top_p, image_data=None):
+        from copy import deepcopy
         import json
-        # content = [{"type": "text", "text": prompt},image_data]
-        # content = [{"type": "text", "text": prompt}, image_data]
+        # deepcopy all the inputs
+        frequency_penalty = deepcopy(frequency_penalty)
+        presence_penalty = deepcopy(presence_penalty)
+        max_tokens = deepcopy(max_tokens)
+        messages = deepcopy(messages)
+        model = deepcopy(model)
+        presence_penalty = deepcopy(presence_penalty)
+        prompt = deepcopy(prompt)
+        task = deepcopy(task)
+        temperature = deepcopy(temperature)
+        top_p = deepcopy(top_p)
+
         try:
             litellm.set_verbose = True
             if task in ["transcription", "classification", "image_captioning",
