@@ -809,7 +809,7 @@ class ShowMessages:
                 "messages": ("LLLM_MESSAGES", {"default": "Something to show..."}),
             },
             "optional": {
-                "list_display": ("STRING", {"multi_line": True, "default": ""}),
+                "list_display": ("STRING", {"multiline": True, "default": ""}),
             },
         }
 
