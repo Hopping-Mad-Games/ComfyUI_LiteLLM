@@ -628,7 +628,7 @@ class LitellmCompletionV2:
                     "response_format": {
                         "type": "json_schema",
                         "json_schema": {
-                            "name": "video_script_structure",
+                            "name": "user_model",
                             "strict": True,
                             "schema": {
                                 "$schema": "http://json-schema.org/draft-07/schema#",
