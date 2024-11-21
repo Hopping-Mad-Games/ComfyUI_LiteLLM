@@ -64,33 +64,41 @@ class AgentNode(AgentBaseNode):
         recursion_filter: Callable | None = kwargs.pop("recursion_filter", None)
         memory_provider: Callable | None = kwargs.pop("memory_provider", None)
         max_iterations = kwargs.pop("max_iterations", 1)
-        ret = (None,)
+        if "messages" not in kwargs:
+            kwargs["messages"] = []
+        ret = (None,None,None,None)
 
         for _ in range(max_iterations):
-            memory_prompt = kwargs["prompt"]
-            memories = memory_provider(memory_prompt) if memory_provider else None
-            if memories:
-                new_prompt = "<RAG> \n".join(memories) + "\n</RAG>\n" + kwargs["prompt"]
-
-            kwargs["prompt"] = new_prompt if memories else kwargs["prompt"]
-            ret = self.base_handler(**kwargs)
-            ret_completion = ret[2]
-            ret_messages = ret[1]
-            prompt = kwargs["prompt"]
-            re_ret_completion = recursion_filter(prompt, ret_completion) if recursion_filter else ret_completion
-
-            if re_ret_completion is ret_completion:
-                new_messages = ret[1] + [{"role": "assistant", "content": re_ret_completion}]
-                new_completion = re_ret_completion
-                break
-            else:
-                # kwargs["prompt"] = prompt
-                new_messages = ret[1] + [{"role": "assistant", "content": re_ret_completion}]
-                new_completion = re_ret_completion
-
-            ret = (ret[0], new_messages, new_completion, ret[-1],)
+            kwargs, memories = self.memory_step(kwargs, memory_provider)
+            recursive_completion = self.recursion_step(kwargs, ret, recursion_filter)
+            # insert the recursive completion into the messages
+            kwargs["messages"].append({"role": "assistant", "content": f"<ASSISTANT_THOUGHTS>{recursive_completion}</ASSISTANT_THOUGHTS>"})
+            # for compatibility, need to add a user message
+            kwargs["messages"].append({"role": "user", "content": kwargs["prompt"]})
+            ret, ret_completion,ret_messages = self.normal_step(kwargs)
 
         return ret
+
+    def normal_step(self, kwargs):
+        ret = self.base_handler(**kwargs)
+        ret_completion = ret[2]
+        ret_messages = ret[1]
+        return ret, ret_completion,ret_messages
+
+    def memory_step(self, kwargs, memory_provider):
+        memory_prompt = kwargs["prompt"]
+        memories = memory_provider(memory_prompt) if memory_provider else None
+        if memories:
+            new_prompt = "<RAG> \n".join(memories) + "\n</RAG>\n" + kwargs["prompt"]
+
+        kwargs["prompt"] = new_prompt if memories else kwargs["prompt"]
+
+        return kwargs,memories
+
+    def recursion_step(self, kwargs, last_results, recursion_filter):
+        last_completion = last_results[2]
+        recursive_completion = recursion_filter(kwargs["prompt"], last_completion) if recursion_filter else last_completion
+        return recursive_completion
 
 
 class BasicRecursionFilterNode(AgentBaseNode):
@@ -136,7 +144,7 @@ class BasicRecursionFilterNode(AgentBaseNode):
             for _ in range(max_depth):
                 prompt = (
                     recursion_prompt.replace("{prompt}", prompt).
-                    replace("{completion}", completion).
+                    replace("{completion}", completion or "").
                     replace("{date}", datetime.now().strftime("%Y-%m-%d"))
                     )
                 ret = cls.base_handler(prompt=prompt)
