@@ -6,15 +6,30 @@ except ImportError:
     from base import AgentBaseNode
 
 default_expansion_prompt = """
+the date is {date}
+
 given the prompt:
+<prompt>
 {prompt}
+</prompt>
 
 and completion:
+<completion>
 {completion}
+</completion>
 
 Please expand on the completion by.
 - considering the prompt more thoroughly
+ - why would the user have entered this as their prompt?
+ - based on the language the user has used, what can i assume about the user in order to help them?
 - considering what the completion might have missed.
+
+use tags:
+<consideration></consideration>
+<completion></completion>
+for your response
+please understand that what you tag as completion will go directly to the user.
+please completely re-write and re-tag everything, but include everything useful from the given completion and prompt
 """
 
 
@@ -117,8 +132,13 @@ class BasicRecursionFilterNode(AgentBaseNode):
     @classmethod
     def handler(cls, max_depth=1, recursion_prompt=default_expansion_prompt):
         def recursion_filter(prompt, completion):
+            from datetime import datetime
             for _ in range(max_depth):
-                prompt = recursion_prompt.replace("{prompt}", prompt).replace("{completion}", completion)
+                prompt = (
+                    recursion_prompt.replace("{prompt}", prompt).
+                    replace("{completion}", completion).
+                    replace("{date}", datetime.now().strftime("%Y-%m-%d"))
+                    )
                 ret = cls.base_handler(prompt=prompt)
                 completion = ret[2]
             return completion
