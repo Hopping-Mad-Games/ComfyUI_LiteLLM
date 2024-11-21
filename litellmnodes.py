@@ -110,7 +110,7 @@ class AddDataModelToLLLm:
                     "STRING",
                     {"default": "class UserModel(BaseModel):\n    name: str= Field(..., description='The name of the "
                                 "person')\n    age: int\n", "multiline": True}),
-                "data_model": ("data_model", {"default": None}),
+                "data_model": ("DATA_MODEL", {"default": None}),
             }
         }
 
@@ -340,11 +340,13 @@ class LiteLLMCompletion:
                     )
 
                 except litellm.exceptions.RateLimitError as e:
-                    safe_print(f"Rate limit error: {safe_error(e)}")
+                    print(f"Rate limit error: {e}")
+
                     time.sleep(5)
                     continue
                 except Exception as e:
-                    safe_print(f"An error occurred: {safe_error(e)}")
+                    print(f"An error occurred: {e}")
+
                     raise
 
         response_choices = response.choices
@@ -467,14 +469,14 @@ class LitellmCompletionV2:
             raise ValueError(f"Invalid task '{task}'. Valid tasks are: {valid_tasks}")
 
             # Optional parameters handling
-        if kwargs["top_p"] == 0:
-            kwargs["top_p"] = None
-        if kwargs["temperature"] == 0:
-            kwargs["temperature"] = None
-        if kwargs["frequency_penalty"] == 0:
-            kwargs["frequency_penalty"] = None
-        if kwargs["presence_penalty"] == 0:
-            kwargs["presence_penalty"] = None
+        if kwargs.get("top_p", 0) == 0:
+            kwargs["top_p"] = 0
+        if kwargs.get("temperature", 0) == 0:
+            kwargs["temperature"] = 0
+        if kwargs.get("frequency_penalty", 0) == 0:
+            kwargs["frequency_penalty"] = 0
+        if kwargs.get("presence_penalty", 0) == 0:
+            kwargs["presence_penalty"] = 0
 
         prompt = kwargs.get('prompt', "Hello World!")
 
@@ -498,8 +500,11 @@ class LitellmCompletionV2:
         mdl_cls = None
         if isinstance(kwargs["model"], dict):
             if "response_format" in kwargs["model"]["kwargs"]:
-                if kwargs["model"]["kwargs"]["response_format"].__name__ == "UserModel":
-                    mdl_cls = kwargs["model"]["kwargs"]["response_format"]
+                #if kwargs["model"]["kwargs"]["response_format"].__name__ == "UserModel":
+                mdl_cls = kwargs["model"]["kwargs"]["response_format"]
+                if isinstance(mdl_cls, dict):
+                    kwargs["model"]["kwargs"]["response_format"] = mdl_cls
+                else:
                     kwargs["model"]["kwargs"]["response_format"] = mdl_cls.schema_json()
 
         unique_id = str(hashlib.sha256(json.dumps(kwargs).encode()).hexdigest())
@@ -655,15 +660,19 @@ class LitellmCompletionV2:
                     if "kwargs" in model:
                         use_kwargs.update(model["kwargs"])
                         if "response_format" in use_kwargs:
-                            base_scm_use = base_schema.copy()
-                            scm = use_kwargs["response_format"].schema()
-                            base_scm_use["response_format"]["json_schema"]["schema"].update(scm)
-                            use_kwargs["response_format"] = json.dumps(base_scm_use["response_format"])
+                            base_scm_use = deepcopy(base_schema)
+                            if  hasattr(use_kwargs["response_format"], "schema"):
+                                scm = use_kwargs["response_format"].schema()
+                                base_scm_use["response_format"]["json_schema"]["schema"].update(scm)
+                                use_kwargs["response_format"] = json.dumps(base_scm_use["response_format"])
 
                             # fix model string
                             use_kwargs["model"] = use_kwargs["model"]["model"]
-                            use_kwargs.pop("prompt")
-                            ob = json.loads(use_kwargs["response_format"])
+
+                            if isinstance(use_kwargs["response_format"], str):
+                                ob = json.loads(use_kwargs["response_format"])
+                            else:
+                                ob = use_kwargs["response_format"]
 
                             if "$defs" in ob["json_schema"]["schema"]:
                                 defs = ob["json_schema"]["schema"]["$defs"]
@@ -672,6 +681,7 @@ class LitellmCompletionV2:
 
                             use_kwargs["response_format"] = ob
 
+                use_kwargs.pop("prompt", None)
                 response = litellm.completion(
                     **use_kwargs
                 )

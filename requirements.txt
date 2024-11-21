@@ -2,3 +2,12 @@ pyyaml
 addict
 litellm
 boto3
+
+sentence-transformers
+rank_bm25
+lightrag-hku
+aioboto3
+ollama
+nano_vectordb
+neo4j
+oracledb
