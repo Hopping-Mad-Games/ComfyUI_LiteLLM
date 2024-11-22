@@ -3,19 +3,18 @@ from lightrag import LightRAG
 from lightrag import QueryParam
 
 mem_default_prompt = """
+
 Given the prompt:
 <Prompt>
 {prompt}
 </Prompt>
 
-Provide a very concise matching_prompt that will be used to query the RAG system.
-The matching_prompt should not be about the task mentioned in the prompt,
-but should be designed to retrieve the context or data that is needed for another LLM to complete the task.
-The matching_prompt should specify that the output should also be non-conversational,
-provided with minimal context and when possible be direct quotes from the source.
-The response should be very,very information dense.
+Provide a very concise matching_prompt that will be used to query the RAG system. The matching_prompt should not be about the task mentioned in the prompt but should be designed to retrieve the context or data that is needed for another LLM to complete the task. The matching_prompt should specify that the ouput should also be non-conversational, provided with minimal context and when possible be direct quotes from the source. The response should be very,very inormation dense.
+also the matching_prompt should include the instruction for the llm to return "None" if there is nothing relevant
 
 Your response should be only the matching_prompt, without any additional context or content.
+
+
 """
 
 
