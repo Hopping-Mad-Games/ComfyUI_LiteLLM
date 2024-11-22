@@ -1,8 +1,17 @@
-from pathlib import Path
+import importlib
+import os
 import json
-from .. import config
-from ..utils.hash_utils import get_input_hash
+from pathlib import Path
+from pydantic import BaseModel, create_model
 
+try:
+    from .. import config
+    from ..utils.hash_utils import get_input_hash
+    from .. import litellmnodes
+except ImportError:
+    import config
+    from utils.hash_utils import get_input_hash
+    import litellmnodes
 
 try:
     from .base import AgentBaseNode
@@ -38,17 +47,14 @@ please completely re-write and re-tag everything, but include everything useful 
 
 
 class AgentNode(AgentBaseNode):
-    import importlib
-    import os
-    import json
-    from pathlib import Path
-    from .. import config
-    from ..utils.hash_utils import get_input_hash
-    
     __package__ = globals().get("__package__")
     __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
 
-    litellmnodes = importlib.import_module("..litellmnodes", __package__)
+    try:
+        litellmnodes = importlib.import_module("..litellmnodes", __package__)
+    except ImportError:
+        litellmnodes = importlib.import_module("litellmnodes")
+
     rough_handler = litellmnodes.LitellmCompletionV2().handler
 
     base_handler = rough_handler
@@ -66,15 +72,105 @@ class AgentNode(AgentBaseNode):
         return cache_dir
 
     def save_response(self, response_hash, response_data):
+        # Create a copy to avoid modifying the original data
+        data_to_save = response_data.copy()
+
+        # Handle non-serializable model kwargs
+        if "model" in data_to_save and "kwargs" in data_to_save["model"]:
+            model_kwargs = data_to_save["model"]["kwargs"].copy()
+            # Convert any non-serializable objects to a dict with type info
+            for key, value in model_kwargs.items():
+                if not isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                    if isinstance(value, type) and hasattr(value, 'model_json_schema'):  # It's a Pydantic model class
+                        model_kwargs[key] = {
+                            "_type": "pydantic_model_definition",
+                            "_schema": value.model_json_schema(),
+                            "_model_name": value.__name__
+                        }
+                    elif hasattr(value, 'model_dump'):  # It's a Pydantic model instance
+                        model_kwargs[key] = {
+                            "_type": f"{value.__class__.__module__}.{value.__class__.__name__}",
+                            "_pydantic": True,
+                            "_data": value.model_dump()
+                        }
+                    else:
+                        model_kwargs[key] = {
+                            "_type": f"{value.__class__.__module__}.{value.__class__.__name__}",
+                            "_repr": str(value)
+                        }
+            data_to_save["model"]["kwargs"] = model_kwargs
+
         cache_file = self.get_cache_dir() / f"{response_hash}.json"
         with open(cache_file, 'w') as f:
-            json.dump(response_data, f)
+            json.dump(data_to_save, f)
 
     def load_response(self, response_hash):
         cache_file = self.get_cache_dir() / f"{response_hash}.json"
         if cache_file.exists():
             with open(cache_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+
+            # Try to reconstruct any saved class objects
+            if "model" in data and "kwargs" in data["model"]:
+                model_kwargs = data["model"]["kwargs"]
+                for key, value in model_kwargs.items():
+                    if isinstance(value, dict) and "_type" in value:
+                        try:
+                            if value["_type"] == "pydantic_model_definition":
+                                # Create a new Pydantic model class from the JSON schema
+                                schema = value["_schema"]
+                                field_definitions = {}
+                                
+                                # Map JSON schema types to Python types
+                                type_map = {
+                                    "integer": int,
+                                    "number": float,
+                                    "string": str,
+                                    "boolean": bool,
+                                    "array": list
+                                }
+                                
+                                for field_name, field_info in schema["properties"].items():
+                                    field_type = field_info["type"]
+                                    if field_type == "array" and "items" in field_info:
+                                        # Handle array types (e.g., list[str])
+                                        item_type = field_info["items"]["type"]
+                                        python_type = list[type_map.get(item_type, str)]
+                                    else:
+                                        python_type = type_map.get(field_type, str)
+                                    
+                                    field_definitions[field_name] = (
+                                        python_type,
+                                        ... if field_name in schema.get("required", []) else None
+                                    )
+                                
+                                model_class = create_model(
+                                    value["_model_name"],
+                                    __base__=BaseModel,
+                                    **field_definitions
+                                )
+                                model_kwargs[key] = model_class
+                            elif value.get("_pydantic"):
+                                # Handle Pydantic model instance
+                                module_name, class_name = value["_type"].rsplit(".", 1)
+                                if module_name == "__main__":
+                                    if class_name in globals():
+                                        cls = globals()[class_name]
+                                    else:
+                                        raise ImportError(f"Class {class_name} not found in globals")
+                                else:
+                                    module = importlib.import_module(module_name)
+                                    cls = getattr(module, class_name)
+                                model_kwargs[key] = cls(**value["_data"])
+                            else:
+                                model_kwargs[key] = str(value["_repr"])
+                        except Exception as e:
+                            print(f"Warning: Could not reconstruct class {value['_type']}: {e}")
+                            if "_repr" in value:
+                                model_kwargs[key] = str(value["_repr"])
+                data["model"]["kwargs"] = model_kwargs
+
+            return data
         return None
 
     @classmethod
@@ -106,11 +202,11 @@ class AgentNode(AgentBaseNode):
             cached_response = self.load_response(input_hash)
             if cached_response:
                 return (cached_response["model"],
-                       cached_response["messages"],
-                       cached_response["completion"],
-                       cached_response["completion_list"],
-                       cached_response["messages_results"],
-                       cached_response.get("usage", "Usage"))
+                        cached_response["messages"],
+                        cached_response["completion"],
+                        cached_response["completion_list"],
+                        cached_response["messages_results"],
+                        cached_response.get("usage", "Usage"))
 
         # If no cache hit, proceed with normal processing
         if kwargs.get("List_prompts", None):
@@ -202,7 +298,11 @@ class BasicRecursionFilterNode(AgentBaseNode):
     __package__ = globals().get("__package__")
     __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
 
-    litellmnodes = importlib.import_module("..litellmnodes", __package__)
+    try:
+        litellmnodes = importlib.import_module("..litellmnodes", __package__)
+    except ImportError:
+        litellmnodes = importlib.import_module("litellmnodes")
+
     rough_handler = litellmnodes.LitellmCompletionV2().handler
 
     @classmethod

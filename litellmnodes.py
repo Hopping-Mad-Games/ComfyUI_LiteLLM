@@ -5,7 +5,11 @@ import json
 import time
 import litellm
 from copy import deepcopy
-from . import config
+
+try:
+    from . import config
+except ImportError:
+    import config
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
