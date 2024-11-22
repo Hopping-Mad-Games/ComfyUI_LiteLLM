@@ -2,7 +2,6 @@
 import sys
 import os.path
 import subprocess
-from .utils import safe_print
 
 custom_nodes_path = os.path.dirname(os.path.abspath(__file__))
 
@@ -21,5 +20,5 @@ def ensure_package():
 
 # ensure_package() #no longer needed
 # here we will remind the user that their keys should be in the env vars and not saved to the graph
-safe_print("ComfyUI_LiteLLM: Please ensure that your keys are stored in environment variables and do not save to the graph.")
-safe_print("ComfyUI_LiteLLM: You can at your discretion put them in the config.yaml file, but it is not recommended.")
+print("ComfyUI_LiteLLM: Please ensure that your keys are stored in environment variables and do not save to the graph.")
+print("ComfyUI_LiteLLM: You can at your discretion put them in the config.yaml file, but it is not recommended.")

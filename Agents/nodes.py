@@ -1,4 +1,8 @@
-from typing import Callable
+from pathlib import Path
+import json
+from .. import config
+from ..utils.hash_utils import get_input_hash
+
 
 try:
     from .base import AgentBaseNode
@@ -35,6 +39,12 @@ please completely re-write and re-tag everything, but include everything useful 
 
 class AgentNode(AgentBaseNode):
     import importlib
+    import os
+    import json
+    from pathlib import Path
+    from .. import config
+    from ..utils.hash_utils import get_input_hash
+    
     __package__ = globals().get("__package__")
     __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
 
@@ -48,21 +58,61 @@ class AgentNode(AgentBaseNode):
     RETURN_NAMES = ("Model", "Messages", "Completion", "List_Completions", "List_messages", "Usage",)
 
     @classmethod
+    def get_cache_dir(cls):
+        # Use the temporary directory from config
+        tmp_dir = Path(config.config_settings['tmp_dir'])
+        cache_dir = tmp_dir / "agent_response_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def save_response(self, response_hash, response_data):
+        cache_file = self.get_cache_dir() / f"{response_hash}.json"
+        with open(cache_file, 'w') as f:
+            json.dump(response_data, f)
+
+    def load_response(self, response_hash):
+        cache_file = self.get_cache_dir() / f"{response_hash}.json"
+        if cache_file.exists():
+            with open(cache_file, 'r') as f:
+                return json.load(f)
+        return None
+
+    @classmethod
     def INPUT_TYPES(cls):
         base_inputs = cls.base_input_types()
+        # Remove use_cached_response from optional inputs if it exists
+        base_inputs["optional"].pop("use_cached_response", None)
         base_inputs["required"].update({
             "max_iterations": ("INT", {"default": 100, "min": 1}),
             "List_prompts": ("LIST", {"default": None}),
         })
         base_inputs["optional"].update({
             "memory_provider": ("LLLM_AGENT_MEMORY_PROVIDER", {"default": None}),
-            "recursion_filter": ("LLLM_AGENT_RECURSION_FILTER", {"default": None})
+            "recursion_filter": ("LLLM_AGENT_RECURSION_FILTER", {"default": None}),
+            "use_last_response": ("BOOLEAN", {"default": False})
         })
         return base_inputs
 
     def handler(self, **kwargs):
         from copy import deepcopy
         from typing import Callable
+
+        # Generate hash for the complete input state before any modifications
+        input_hash = get_input_hash(**kwargs)
+        use_last_response = kwargs.get("use_last_response", False)
+
+        # Check for cached response at the node level
+        if use_last_response:
+            cached_response = self.load_response(input_hash)
+            if cached_response:
+                return (cached_response["model"],
+                       cached_response["messages"],
+                       cached_response["completion"],
+                       cached_response["completion_list"],
+                       cached_response["messages_results"],
+                       cached_response.get("usage", "Usage"))
+
+        # If no cache hit, proceed with normal processing
         if kwargs.get("List_prompts", None):
             prompts = kwargs.pop("List_prompts", None)
         else:
@@ -70,12 +120,15 @@ class AgentNode(AgentBaseNode):
 
         recursion_filter: Callable | None = kwargs.pop("recursion_filter", None)
         memory_provider: Callable | None = kwargs.pop("memory_provider", None)
+        kwargs.pop("use_last_response", False)  # Remove from kwargs after checking
 
         max_iterations = kwargs.pop("max_iterations", 1)
         if "messages" not in kwargs:
             kwargs["messages"] = []
         ret = (None, None, None, None)
 
+        # Ensure use_cached_response is set to False in kwargs
+        kwargs["use_cached_response"] = False
         frozen_kwargs = deepcopy(kwargs)
 
         all_results = []
@@ -90,21 +143,32 @@ class AgentNode(AgentBaseNode):
                 # insert the recursive completion into the messages
                 kwargs["messages"].append({"role": "assistant",
                                            "content": f"<ASSISTANT_THOUGHTS>{recursive_completion}</ASSISTANT_THOUGHTS>"})
-                # for compatibility, need to add a user message
-                #kwargs["messages"].append({"role": "user", "content": kwargs["prompt"]})
                 ret, ret_completion, ret_messages = self.normal_step(kwargs)
 
             all_results.append(ret)
 
-        messages_reults = []
+        messages_results = []
         completion_list = []
         for res in all_results:
             completion = res[2]
             completion_list.append(completion)
-            messages_reults.extend(res[1])
+            messages_results.extend(res[1])
 
-        ret = (res[0], res[1], completion, completion_list, messages_reults, "Usage",)
-        return ret
+        final_result = (res[0], res[1], completion, completion_list, messages_results, "Usage")
+
+        # Save the complete node result if we're using last_response
+        if use_last_response:
+            response_data = {
+                "model": res[0],
+                "messages": res[1],
+                "completion": completion,
+                "completion_list": completion_list,
+                "messages_results": messages_results,
+                "usage": "Usage"
+            }
+        self.save_response(input_hash, response_data)
+
+        return final_result
 
     def normal_step(self, kwargs):
         ret = self.base_handler(**kwargs)

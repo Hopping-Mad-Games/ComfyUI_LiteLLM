@@ -26,17 +26,6 @@ def mask_sensitive_data(text):
 
     return text
 
-def safe_print(message):
-    """
-    Safely print a message, masking any sensitive data.
-    """
-    print(mask_sensitive_data(str(message)))
-
-def safe_error(error):
-    """
-    Safely format an error message, masking any sensitive data.
-    """
-    return mask_sensitive_data(str(error))
 from pydantic import BaseModel
 
 class CustomDict(dict):
