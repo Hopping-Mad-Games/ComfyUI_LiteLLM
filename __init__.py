@@ -5,9 +5,10 @@
 """
 import os
 import sys
-import __main__
-
+from . import utils
 from . import config
+
+CustomDict = utils.custom_dict.CustomDict
 
 python = sys.executable
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -16,14 +17,14 @@ WEB_DIRECTORY = "js"
 
 from . import litellmnodes
 
-from .LightRAG import NODE_CLASS_MAPPINGS as LR_NCM
-from .LightRAG import NODE_DISPLAY_NAME_MAPPINGS as LR_NDNM
+from .lightrag import NODE_CLASS_MAPPINGS as LR_NCM
+from .lightrag import NODE_DISPLAY_NAME_MAPPINGS as LR_NDNM
 
 NODE_CLASS_MAPPINGS.update(LR_NCM)
 NODE_DISPLAY_NAME_MAPPINGS.update(LR_NDNM)
 
-from .Agents import NODE_CLASS_MAPPINGS as AG_NCM
-from .Agents import NODE_DISPLAY_NAME_MAPPINGS as AG_NDNM
+from .agents import NODE_CLASS_MAPPINGS as AG_NCM
+from .agents import NODE_DISPLAY_NAME_MAPPINGS as AG_NDNM
 
 NODE_CLASS_MAPPINGS.update(AG_NCM)
 NODE_DISPLAY_NAME_MAPPINGS.update(AG_NDNM)
@@ -33,4 +34,4 @@ NODE_DISPLAY_NAME_MAPPINGS.update(litellmnodes.NODE_DISPLAY_NAME_MAPPINGS)
 
 
 
-__all__ = ['NODE_CLASS_MAPPINGS', "WEB_DIRECTORY", "NODE_DISPLAY_NAME_MAPPINGS"]
+__all__ = ['NODE_CLASS_MAPPINGS', "WEB_DIRECTORY", "NODE_DISPLAY_NAME_MAPPINGS","CustomDict"]

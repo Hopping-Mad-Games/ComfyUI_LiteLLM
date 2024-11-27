@@ -1,4 +1,4 @@
-tmp_dir: comfy_path//temp
+tmp_dir: comfy_path//data
 API_KEY1: replace_this_with_your_key_if_you_want_to_be_rather_insecure
 API_KEY2: replace_this_with_your_key_if_you_want_to_be_rather_insecure
 API_KEY3: replace_this_with_your_key_if_you_want_to_be_rather_insecure
