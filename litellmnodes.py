@@ -8,7 +8,7 @@ from copy import deepcopy
 
 try:
     from . import config, CustomDict
-    #CustomDict = CustomDict.CustomDict
+    # CustomDict = CustomDict.CustomDict
 except ImportError:
     import config
     import CustomDict
@@ -42,6 +42,8 @@ class HTMLRenderer:
         return {
             "required": {
                 "html_content": ("STRING", {"multiline": True}),
+                "iframe_height": ("STRING", {"default": "800px"}),
+                "iframe_width": ("STRING", {"default": "100%"}),
             },
         }
 
@@ -49,13 +51,14 @@ class HTMLRenderer:
     FUNCTION = "handler"
     OUTPUT_NODE = True
 
-    def handler(self, html_content):
-        tmplt = """<iframe srcdoc="{html_content}" style="width:100%; height:800px; border:none;"></iframe>"""
-        # Replace newlines and double quotes in the raw HTML
-        y = tmplt.format(html_content=html_content.replace("\n", "").replace('"', '&quot;'))
-        html_content = y
+    def handler(self, html_content, iframe_height, iframe_width):
+        new_html_content = html_content.replace("\"", "'")
+        new_html_content = f"""<iframe srcdoc="{new_html_content}" style="width: {iframe_width}; height: {iframe_height};border: none;"></iframe>"""
 
-        ret = {"ui": {"string": [html_content]}, "result": (html_content,)}
+
+        # Replace newlines and double quotes in the raw HTML
+
+        ret = {"ui": {"string": [new_html_content]}, "result": (html_content,)}
         return ret
 
 
@@ -301,7 +304,7 @@ class LiteLLMCompletion:
         kwargs["messages"] = messages
 
         import hashlib
-        #from . import CustomDict
+        # from . import CustomDict
         kwargs.pop('use_cached_response', None)
         uid_kwargs = CustomDict()
         uid_kwargs.update(kwargs.copy())
@@ -505,7 +508,7 @@ class LitellmCompletionV2:
         mdl_cls = None
         if isinstance(kwargs["model"], dict):
             if "response_format" in kwargs["model"]["kwargs"]:
-                #if kwargs["model"]["kwargs"]["response_format"].__name__ == "UserModel":
+                # if kwargs["model"]["kwargs"]["response_format"].__name__ == "UserModel":
                 mdl_cls = kwargs["model"]["kwargs"]["response_format"]
                 if isinstance(mdl_cls, dict):
                     kwargs["model"]["kwargs"]["response_format"] = mdl_cls
@@ -624,6 +627,19 @@ class LitellmCompletionV2:
             litellm.set_verbose = True
             if task in ["transcription", "classification", "image_captioning",
                         "object_detection"]:  # Tasks that require vision API
+
+                if image_data:
+                    last_message = messages[-1]
+                    if isinstance(last_message["content"], str):
+                        message_type = "text"
+                        new_message = {"type":"text", "text": last_message["content"]}
+                        last_message["content"] = [new_message]
+                    else:
+                        message_type = last_message["content"][-1]["type"]
+
+                    if message_type == "text":
+                        last_message["content"].append(image_data)
+
                 response = litellm.completion(
                     model=model,
                     messages=messages,
@@ -666,7 +682,7 @@ class LitellmCompletionV2:
                         use_kwargs.update(model["kwargs"])
                         if "response_format" in use_kwargs:
                             base_scm_use = deepcopy(base_schema)
-                            if  hasattr(use_kwargs["response_format"], "schema"):
+                            if hasattr(use_kwargs["response_format"], "schema"):
                                 scm = use_kwargs["response_format"].schema()
                                 base_scm_use["response_format"]["json_schema"]["schema"].update(scm)
                                 use_kwargs["response_format"] = json.dumps(base_scm_use["response_format"])
