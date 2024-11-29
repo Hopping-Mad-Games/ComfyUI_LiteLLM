@@ -5,7 +5,10 @@ boto3
 
 sentence-transformers
 rank_bm25
-lightrag-hku
+
+# lightrag-hku
+git+https://github.com/TashaSkyUp/LightRAG.git@patch-1
+
 aioboto3
 ollama
 nano_vectordb
