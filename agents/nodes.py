@@ -40,7 +40,9 @@ Please expand on the completion by.
 use tags:
 <consideration></consideration>
 <completion></completion>
-for your response
+
+inside the consideration tag it is important that you think step by step in at least 5 steps about how to adhere to the instructions.
+
 please understand that what you tag as completion will go directly to the user.
 please completely re-write and re-tag everything, but include everything useful from the given completion and prompt
 """
@@ -189,15 +191,41 @@ class AgentNode(AgentBaseNode):
         })
         return base_inputs
 
+    def process_iteration(self, kwargs, memory_provider, recursion_filter, ret):
+        # Memory step
+        if memory_provider:
+            memories = memory_provider(kwargs["prompt"])
+            if memories:
+                new_prompt = (
+                    "<SYSTEM_RAG>\n" +
+                    "\n".join(memories) +
+                    "\n</SYSTEM_RAG>\n" +
+                    kwargs["prompt"]
+                )
+                kwargs["prompt"] = new_prompt
+
+        # Recursion step
+        if recursion_filter:
+            recursive_completion = recursion_filter(
+                kwargs["prompt"],
+                ret[2]  # Using initial completion from messages if available
+            )
+            kwargs["messages"].append({
+                "role": "assistant",
+                "content": f"<ASSISTANT_THOUGHTS>{recursive_completion}</ASSISTANT_THOUGHTS>"
+            })
+
+        # Base handling step
+        ret = self.base_handler(**kwargs)
+        return ret, kwargs
+
     def handler(self, **kwargs):
         from copy import deepcopy
-        from typing import Callable
 
-        # Generate hash for the complete input state before any modifications
+        # Initial setup and cache check
         input_hash = get_input_hash(**kwargs)
         use_last_response = kwargs.get("use_last_response", False)
 
-        # Check for cached response at the node level
         if use_last_response:
             cached_response = self.load_response(input_hash)
             if cached_response:
@@ -208,22 +236,32 @@ class AgentNode(AgentBaseNode):
                         cached_response["messages_results"],
                         cached_response.get("usage", "Usage"))
 
-        # If no cache hit, proceed with normal processing
+        # Prompt preparation
         if kwargs.get("List_prompts", None):
             prompts = kwargs.pop("List_prompts", None)
         else:
             prompts = [kwargs.pop("prompt", None)]
 
-        recursion_filter: Callable | None = kwargs.pop("recursion_filter", None)
-        memory_provider: Callable | None = kwargs.pop("memory_provider", None)
-        kwargs.pop("use_last_response", False)  # Remove from kwargs after checking
+        recursion_filter = kwargs.pop("recursion_filter", None)
+        memory_provider = kwargs.pop("memory_provider", None)
+        kwargs.pop("use_last_response", False)
 
         max_iterations = kwargs.pop("max_iterations", 1)
         if "messages" not in kwargs:
             kwargs["messages"] = []
-        ret = (None, None, None, None)
 
-        # Ensure use_cached_response is set to False in kwargs
+        # Initialize ret with last assistant message if available
+        initial_completion = None
+        if kwargs["messages"]:
+            assistant_messages = [
+                msg["content"] for msg in kwargs["messages"]
+                if msg["role"] == "assistant"
+            ]
+            if assistant_messages:
+                initial_completion = assistant_messages[-1]
+
+        ret = (None, kwargs["messages"], initial_completion, None)
+
         kwargs["use_cached_response"] = False
         frozen_kwargs = deepcopy(kwargs)
 
@@ -234,14 +272,12 @@ class AgentNode(AgentBaseNode):
             kwargs["prompt"] = prompt
 
             for _ in range(max_iterations):
-                if memory_provider:
-                    kwargs, memories = self.memory_step(kwargs, memory_provider)
-                if recursion_filter:
-                    recursive_completion = self.recursion_step(kwargs, ret, recursion_filter)
-                    kwargs["messages"].append({"role": "assistant",
-                                               "content": f"<ASSISTANT_THOUGHTS>{recursive_completion}</ASSISTANT_THOUGHTS>"})
-
-                ret, ret_completion, ret_messages = self.normal_step(kwargs)
+                ret, kwargs = self.process_iteration(
+                    kwargs=kwargs,
+                    memory_provider=memory_provider,
+                    recursion_filter=recursion_filter,
+                    ret=ret
+                )
 
             all_results.append(ret)
 
@@ -254,7 +290,6 @@ class AgentNode(AgentBaseNode):
 
         final_result = (res[0], res[1], completion, completion_list, messages_results, "Usage")
 
-        # Save the complete node result if we're using last_response
         response_data = {
             "model": res[0],
             "messages": res[1],
@@ -267,63 +302,23 @@ class AgentNode(AgentBaseNode):
 
         return final_result
 
-    def normal_step(self, kwargs):
-        ret = self.base_handler(**kwargs)
-        ret_completion = ret[2]
-        ret_messages = ret[1]
-        return ret, ret_completion, ret_messages
-
-    def memory_step(self, kwargs, memory_provider):
-        memory_prompt = kwargs["prompt"]
-        memories = memory_provider(memory_prompt) if memory_provider else None
-        if memories:
-            new_prompt = "<SYSTEM_RAG> \n" + "\n".join(memories) + "\n</SYSTEM_RAG>\n" + kwargs["prompt"]
-
-        kwargs["prompt"] = new_prompt if memories else kwargs["prompt"]
-
-        return kwargs, memories
-
-    def recursion_step(self, kwargs, last_results, recursion_filter):
-        last_completion = last_results[2]
-        recursive_completion = recursion_filter(kwargs["prompt"],
-                                                last_completion) if recursion_filter else last_completion
-        return recursive_completion
-
-
 class BasicRecursionFilterNode(AgentBaseNode):
-    import importlib
-    basic_kwargs = {
-        "model": "openai/gpt-4o-mini",
-        "task": "completion"
-    }
     __package__ = globals().get("__package__")
     __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
-
-    try:
-        litellmnodes = importlib.import_module("..litellmnodes", __package__)
-    except ImportError:
-        litellmnodes = importlib.import_module("litellmnodes")
-
-    rough_handler = litellmnodes.LitellmCompletionV2().handler
-
-    @classmethod
-    def base_handler(cls, prompt):
-        new_kwargs = cls.basic_kwargs.copy()
-        new_kwargs.update({"prompt": prompt})
-        ret = cls.rough_handler(**new_kwargs)
-        return ret
-
-    # base_handler = base_handler
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "max_depth": ("INT", {"default": 2, "min": 1}),
+                "LLLM_provider": ("CALLABLE",),  # Now required
             },
             "optional": {
                 "recursion_prompt": ("STRING", {
-                    "default": default_expansion_prompt, "multiline": True}),
+                    "default": default_expansion_prompt,
+                    "multiline": True
+                }),
+                "inner_recursion_filter": ("LLLM_AGENT_RECURSION_FILTER", {"default": None}),
             }
         }
 
@@ -331,18 +326,32 @@ class BasicRecursionFilterNode(AgentBaseNode):
     RETURN_NAMES = ("Recursion Filter",)
 
     @classmethod
-    def handler(cls, max_depth=1, recursion_prompt=default_expansion_prompt):
-        def recursion_filter(prompt, completion):
+    def handler(cls, max_depth: int,
+                LLLM_provider: callable,
+                recursion_prompt: str = default_expansion_prompt,
+                inner_recursion_filter: callable = None
+                ):
+
+        def recursion_filter(prompt: str, completion: str) -> str:
             from datetime import datetime
+
+            current_completion = completion
             for _ in range(max_depth):
-                prompt = (
-                    recursion_prompt.replace("{prompt}", prompt).
-                    replace("{completion}", completion or "").
-                    replace("{date}", datetime.now().strftime("%Y-%m-%d"))
+                current_completion = inner_recursion_filter(
+                    prompt,
+                    current_completion
+                ) if inner_recursion_filter else current_completion
+
+                formatted_prompt = (
+                    recursion_prompt
+                    .replace("{prompt}", prompt)
+                    .replace("{completion}", current_completion or "")
+                    .replace("{date}", datetime.now().strftime("%Y-%m-%d"))
                 )
-                ret = cls.base_handler(prompt=prompt)
-                completion = ret[2]
-            return completion
+
+                current_completion = LLLM_provider(formatted_prompt)
+
+            return current_completion
 
         return (recursion_filter,)
 
