@@ -120,7 +120,7 @@ class AgentNode(AgentBaseNode):
                                 # Create a new Pydantic model class from the JSON schema
                                 schema = value["_schema"]
                                 field_definitions = {}
-                                
+
                                 # Map JSON schema types to Python types
                                 type_map = {
                                     "integer": int,
@@ -129,7 +129,7 @@ class AgentNode(AgentBaseNode):
                                     "boolean": bool,
                                     "array": list
                                 }
-                                
+
                                 for field_name, field_info in schema["properties"].items():
                                     field_type = field_info["type"]
                                     if field_type == "array" and "items" in field_info:
@@ -138,12 +138,12 @@ class AgentNode(AgentBaseNode):
                                         python_type = list[type_map.get(item_type, str)]
                                     else:
                                         python_type = type_map.get(field_type, str)
-                                    
+
                                     field_definitions[field_name] = (
                                         python_type,
                                         ... if field_name in schema.get("required", []) else None
                                     )
-                                
+
                                 model_class = create_model(
                                     value["_model_name"],
                                     __base__=BaseModel,
@@ -234,11 +234,13 @@ class AgentNode(AgentBaseNode):
             kwargs["prompt"] = prompt
 
             for _ in range(max_iterations):
-                kwargs, memories = self.memory_step(kwargs, memory_provider)
-                recursive_completion = self.recursion_step(kwargs, ret, recursion_filter)
-                # insert the recursive completion into the messages
-                kwargs["messages"].append({"role": "assistant",
-                                           "content": f"<ASSISTANT_THOUGHTS>{recursive_completion}</ASSISTANT_THOUGHTS>"})
+                if memory_provider:
+                    kwargs, memories = self.memory_step(kwargs, memory_provider)
+                if recursion_filter:
+                    recursive_completion = self.recursion_step(kwargs, ret, recursion_filter)
+                    kwargs["messages"].append({"role": "assistant",
+                                               "content": f"<ASSISTANT_THOUGHTS>{recursive_completion}</ASSISTANT_THOUGHTS>"})
+
                 ret, ret_completion, ret_messages = self.normal_step(kwargs)
 
             all_results.append(ret)
