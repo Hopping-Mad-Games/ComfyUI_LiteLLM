@@ -61,6 +61,40 @@ class HTMLRenderer:
         ret = {"ui": {"string": [new_html_content]}, "result": (html_content,)}
         return ret
 
+import markdown
+@litellm_base
+class MarkdownNode:
+    """
+    A ComfyUI node that renders Markdown input as HTML in the content area while
+    passing the raw Markdown string as output.
+    """
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "markdown_input": ("STRING", {"multiline": True, "default": "Enter Markdown text here..."}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("Markdown Output",)
+    CATEGORY = "ETK\LLM\Markdown"
+
+    def handler(self, markdown_input):
+        # Render the Markdown to HTML
+        rendered_html = markdown.markdown(markdown_input)
+
+        # Return the required framework structure
+        ret = {
+            "ui": {"string": [rendered_html]},  # Rendered HTML for the UI
+            "result": (markdown_input,),  # Raw Markdown output
+        }
+        return ret
+
+
 
 @litellm_base
 class LiteLLMModelProvider:

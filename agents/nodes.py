@@ -46,7 +46,20 @@ inside the consideration tag it is important that you think step by step in at l
 please understand that what you tag as completion will go directly to the user.
 please completely re-write and re-tag everything, but include everything useful from the given completion and prompt
 """
+default_chunking_prompt = \
+"""
+given
+prompt:
+{prompt}
 
+chunk:
+{chunk}
+
+your previous completion:
+{completion}
+ 
+just repeat the chunk and say that it needs to be processed. 
+"""
 
 class AgentNode(AgentBaseNode):
     __package__ = globals().get("__package__")
@@ -73,7 +86,9 @@ class AgentNode(AgentBaseNode):
         cache_dir.mkdir(parents=True, exist_ok=True)
         return cache_dir
 
-    def save_response(self, response_hash, response_data):
+    async def save_response(self, response_hash, response_data):
+        from asyncio import to_thread
+
         # Create a copy to avoid modifying the original data
         data_to_save = response_data.copy()
 
@@ -103,14 +118,23 @@ class AgentNode(AgentBaseNode):
             data_to_save["model"]["kwargs"] = model_kwargs
 
         cache_file = self.get_cache_dir() / f"{response_hash}.json"
-        with open(cache_file, 'w') as f:
-            json.dump(data_to_save, f)
 
-    def load_response(self, response_hash):
+        async def write_json():
+            with cache_file.open('w') as f:
+                json.dump(data_to_save, f)
+
+        await to_thread(write_json)
+
+    async def load_response(self, response_hash):
+        from asyncio import to_thread
+
         cache_file = self.get_cache_dir() / f"{response_hash}.json"
         if cache_file.exists():
-            with open(cache_file, 'r') as f:
-                data = json.load(f)
+            async def read_json():
+                with cache_file.open('r') as f:
+                    return json.load(f)
+
+            data = await to_thread(read_json)
 
             # Try to reconstruct any saved class objects
             if "model" in data and "kwargs" in data["model"]:
@@ -191,35 +215,45 @@ class AgentNode(AgentBaseNode):
         })
         return base_inputs
 
-    def process_iteration(self, kwargs, memory_provider, recursion_filter, ret):
+    async def process_iteration(self, kwargs, memory_provider, recursion_filter, ret):
+        # ret is a tuple of the form (ret, kwargs) which is the return value of the base_handler
+        # and should be renamed to avoid confusion
+        # lets rename it to something that is more descriptive
+        # that doesnt say "ret" like "base_handler_return"
+
+        import asyncio
+
         # Memory step
         if memory_provider:
-            memories = memory_provider(kwargs["prompt"])
+            memories = await asyncio.to_thread(memory_provider, kwargs["prompt"])
             if memories:
                 new_prompt = (
-                    "<SYSTEM_RAG>\n" +
-                    "\n".join(memories) +
-                    "\n</SYSTEM_RAG>\n" +
-                    kwargs["prompt"]
+                        "<SYSTEM_RAG>\n" +
+                        "\n".join(memories) +
+                        "\n</SYSTEM_RAG>\n" +
+                        kwargs["prompt"]
                 )
                 kwargs["prompt"] = new_prompt
 
         # Recursion step
         if recursion_filter:
-            recursive_completion = recursion_filter(
+            recursive_completion = await asyncio.to_thread(
+                recursion_filter,
                 kwargs["prompt"],
-                ret[2]  # Using initial completion from messages if available
+                ret[2] if len(ret) > 2 else None
             )
             kwargs["messages"].append({
                 "role": "assistant",
-                "content": f"<ASSISTANT_THOUGHTS>{recursive_completion}</ASSISTANT_THOUGHTS>"
+                "content": f"{recursive_completion}"
             })
 
-        # Base handling step
-        ret = self.base_handler(**kwargs)
+        # Base handling step (assuming base_handler is sync)
+        ret = await asyncio.to_thread(self.base_handler, **kwargs)
         return ret, kwargs
 
     def handler(self, **kwargs):
+        import asyncio
+        # from ..utils import get_input_hash
         from copy import deepcopy
 
         # Initial setup and cache check
@@ -227,7 +261,8 @@ class AgentNode(AgentBaseNode):
         use_last_response = kwargs.get("use_last_response", False)
 
         if use_last_response:
-            cached_response = self.load_response(input_hash)
+            # cached_response = await self.load_response(input_hash)
+            cached_response = asyncio.run(self.load_response(input_hash))
             if cached_response:
                 return (cached_response["model"],
                         cached_response["messages"],
@@ -239,6 +274,8 @@ class AgentNode(AgentBaseNode):
         # Prompt preparation
         if kwargs.get("List_prompts", None):
             prompts = kwargs.pop("List_prompts", None)
+            if not isinstance(prompts[0], str):
+                raise ValueError("List_prompts should be a list of strings")
         else:
             prompts = [kwargs.pop("prompt", None)]
 
@@ -260,47 +297,59 @@ class AgentNode(AgentBaseNode):
             if assistant_messages:
                 initial_completion = assistant_messages[-1]
 
-        ret = (None, kwargs["messages"], initial_completion, None)
 
+        ret = (None, kwargs["messages"], initial_completion, None) # initial completion is the last assistant message
         kwargs["use_cached_response"] = False
         frozen_kwargs = deepcopy(kwargs)
 
+        # create main asyncio loop
+        loop = asyncio.get_event_loop()
+
         all_results = []
+        for iter in range(max_iterations):
+            iter_all_calls = []
+            for pi, prompt in enumerate(prompts):
+                kwargs = deepcopy(frozen_kwargs)
+                if iter > 0:
+                    kwargs["messages"] = iter_all_done_messages[pi]
+                kwargs["prompt"] = prompt
+                iter_all_calls.append({"kwargs": kwargs,
+                                       "memory_provider": memory_provider,
+                                       "recursion_filter": recursion_filter,
+                                       "ret": ret})
+            iter_all_results = loop.run_until_complete(
+                asyncio.gather(*[self.process_iteration(**call) for call in iter_all_calls]))
+            iter_all_done_messages = [res[0][1] for res in iter_all_results]
+            iter_all_done_responses = [res[0][2] for res in iter_all_results]
+            # we may need to unpack the results and populate the kwargs["messages"] with the new messages
 
-        for prompt in prompts:
-            kwargs = deepcopy(frozen_kwargs)
-            kwargs["prompt"] = prompt
-
-            for _ in range(max_iterations):
-                ret, kwargs = self.process_iteration(
-                    kwargs=kwargs,
-                    memory_provider=memory_provider,
-                    recursion_filter=recursion_filter,
-                    ret=ret
-                )
-
-            all_results.append(ret)
-
-        messages_results = []
-        completion_list = []
-        for res in all_results:
-            completion = res[2]
-            completion_list.append(completion)
-            messages_results.extend(res[1])
-
-        final_result = (res[0], res[1], completion, completion_list, messages_results, "Usage")
+        # if there where multiple prompts then we dont want to worry about the singular returns
+        # we will just return the last one
+        ret_model = iter_all_results[-1][0][0]
+        ret_messages = iter_all_done_messages[-1]
+        ret_completion = iter_all_done_responses[-1]
+        ret_completion_list = iter_all_done_responses
+        ret_messages_results = iter_all_done_messages
 
         response_data = {
-            "model": res[0],
-            "messages": res[1],
-            "completion": completion,
-            "completion_list": completion_list,
-            "messages_results": messages_results,
+            "model": ret_model,
+            "messages": ret_messages,
+            "completion": ret_completion,
+            "completion_list": ret_completion_list,
+            "messages_results": ret_messages_results,
             "usage": "Usage"
         }
-        self.save_response(input_hash, response_data)
 
-        return final_result
+        # self.save_response(input_hash, response_data)
+        asyncio.run(self.save_response(input_hash, response_data))
+        return [response_data["model"],
+                response_data["messages"],
+                response_data["completion"],
+                response_data["completion_list"],
+                response_data["messages_results"],
+                response_data.get("usage", "Usage")
+                ]
+
 
 class BasicRecursionFilterNode(AgentBaseNode):
     __package__ = globals().get("__package__")
@@ -331,7 +380,6 @@ class BasicRecursionFilterNode(AgentBaseNode):
                 recursion_prompt: str = default_expansion_prompt,
                 inner_recursion_filter: callable = None
                 ):
-
         def recursion_filter(prompt: str, completion: str) -> str:
             from datetime import datetime
 
@@ -353,6 +401,81 @@ class BasicRecursionFilterNode(AgentBaseNode):
 
             return current_completion
 
+        return (recursion_filter,)
+
+
+class DocumentChunkRecursionFilterNode(AgentBaseNode):
+    __package__ = globals().get("__package__")
+    __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "LLLM_provider": ("CALLABLE",),  # Now required
+                "document": ("STRING",),
+                "chunk_size": ("INT", {"default": 512, "min": 1}),
+            },
+            "optional": {
+                "recursion_prompt": ("STRING", {
+                    "default": default_chunking_prompt,
+                    "multiline": True
+                }),
+                "inner_recursion_filter": ("LLLM_AGENT_RECURSION_FILTER", {"default": None}),
+            }
+        }
+
+    RETURN_TYPES = ("LLLM_AGENT_RECURSION_FILTER",)
+    RETURN_NAMES = ("Recursion Filter",)
+
+    @classmethod
+    def handler(cls, LLLM_provider: callable, document:str, chunk_size: int, recursion_prompt: str = default_expansion_prompt,
+                inner_recursion_filter: callable = None):
+
+        class document_chunk_recursion_filter:
+            def __init__(self):
+                self.document = document
+                self.chunked_document = self.chunk_document(self.document, chunk_size)
+                self.recursion_prompt = recursion_prompt
+                self.chunker = self.yield_chunk()
+
+            def yield_chunk(self):
+                for chunk in self.chunked_document:
+                    yield chunk
+
+            def chunk_document(self, doc, size):
+                return [doc[i:i + size] for i in range(0, len(doc), size)]
+
+            def format_prompt(self, chunk, completion,prompt):
+                from datetime import datetime
+                formatted_prompt = (
+                    self.recursion_prompt
+                    .replace("{chunk}", chunk)
+                    .replace("{prompt}", prompt)
+                    .replace("{completion}", completion or "")
+                    .replace("{date}", datetime.now().strftime("%Y-%m-%d"))
+                )
+                return formatted_prompt
+
+            def __call__(self, prompt: str, messages: list) -> str:
+                current_completion = ""
+                chunk = next(self.chunker)
+                current_completion = inner_recursion_filter(
+                    prompt,
+                    messages
+                ) if inner_recursion_filter else current_completion
+
+                formatted_prompt = self.format_prompt(
+                    chunk=chunk,
+                    completion = current_completion,
+                    prompt = prompt
+                )
+
+                current_completion = LLLM_provider(formatted_prompt)
+
+                return current_completion
+
+        recursion_filter = document_chunk_recursion_filter()
         return (recursion_filter,)
 
 
