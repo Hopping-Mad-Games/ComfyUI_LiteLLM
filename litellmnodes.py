@@ -1221,6 +1221,94 @@ class LiteLLMCompletionProvider:
 
         return (completion_function,)
 
+@litellm_base
+class LiteLLMImageCaptioningProvider:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("LITELLM_MODEL", {"default": "anthropic/claude-3.5-sonnet"}),
+                "max_tokens": ("INT", {"default": 250, "min": 1, "max": 1e10, "step": 1}),
+                "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "top_p": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "frequency_penalty": ("FLOAT", {"default": 0}),
+                "presence_penalty": ("FLOAT", {"default": 0}),
+                "image": ("IMAGE", {"default": None}),  # Image input for captioning
+            },
+            "optional": {
+                "prompt": ("STRING", {"default": "Describe the image:", "multiline": True}),
+                "messages": ("LLLM_MESSAGES", {"default": None}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("Caption",)
+
+    def tensor_image_to_base64(self, tensor):
+        import base64
+        from io import BytesIO
+
+        tensor = tensor.mul(255).byte()  # Convert to 0-255
+        image = Image.fromarray(tensor.numpy())
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=100)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+    def get_image_data(self, base64_image):
+        image_data = {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/jpeg;base64," + base64_image
+            }
+        }
+        return image_data
+
+    def handler(self, **kwargs):
+        import litellm
+        from copy import deepcopy
+        from PIL import Image
+        from io import BytesIO
+        import base64
+
+        litellm.drop_params = True
+
+        model = kwargs.get('model', 'anthropic/claude-3.5-sonnet')
+        messages = kwargs.get('messages', [])
+        messages = deepcopy(messages)
+        max_tokens = kwargs.get('max_tokens', None)
+        temperature = kwargs.get('temperature', None)
+        top_p = kwargs.get('top_p', None)
+        frequency_penalty = kwargs.get('frequency_penalty', None)
+        presence_penalty = kwargs.get('presence_penalty', None)
+        image = kwargs.get('image', None)
+        prompt = kwargs.get('prompt', "Describe the image:")
+
+        # Encode image to base64
+        base64_image = self.tensor_image_to_base64(image)
+        image_data = self.get_image_data(base64_image)
+
+        # Append the image data to the messages
+        messages.append({"role": "user", "content": [{"type": "text", "text": prompt}, image_data]})
+
+        # Call LiteLLM for image captioning
+        response = litellm.completion(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+        )
+
+        # Extract the caption from the response
+        response_choices = response.choices
+        response_first_choice = response_choices[0]
+        response_first_choice_message = response_first_choice.message
+        caption = response_first_choice_message.content or ""
+
+        return (caption,)
+
 
 @litellm_base
 class LiteLLMMessage:
