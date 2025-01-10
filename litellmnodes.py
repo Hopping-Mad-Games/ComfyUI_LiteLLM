@@ -1246,27 +1246,31 @@ class LiteLLMImageCaptioningProvider:
     RETURN_TYPES = ("CALLABLE",)
     RETURN_NAMES = ("Captioning function",)
 
-def tensor_image_to_base64(self, tensor):
-    """
-    Convert a tensor in the format (batch_size, height, width, channels) with float values [0, 1]
-    to a base64-encoded JPEG image.
-    """
-    # Ensure the tensor is in the correct shape and format
-    if tensor.dim() == 4:  # Batch of images
-        tensor = tensor[0]  # Take the first image in the batch
-    elif tensor.dim() != 3:
-        raise ValueError(f"Expected tensor with 3 or 4 dimensions, got {tensor.dim()}")
+    def tensor_image_to_base64(self, tensor):
+        """
+        Convert a tensor in the format (batch_size, height, width, channels) with float values [0, 1]
+        to a base64-encoded JPEG image.
+        """
+        from PIL import Image
+        from io import BytesIO
+        import base64
 
-    # Convert from float [0, 1] to uint8 [0, 255]
-    tensor = tensor.mul(255).byte()
+        # Ensure the tensor is in the correct shape and format
+        if tensor.dim() == 4:  # Batch of images
+            tensor = tensor[0]  # Take the first image in the batch
+        elif tensor.dim() != 3:
+            raise ValueError(f"Expected tensor with 3 or 4 dimensions, got {tensor.dim()}")
 
-    # Convert to numpy array and then to PIL image
-    image = Image.fromarray(tensor.numpy(), mode="RGB")
+        # Convert from float [0, 1] to uint8 [0, 255]
+        tensor = tensor.mul(255).byte()
 
-    # Encode to base64
-    buffer = BytesIO()
-    image.save(buffer, format="JPEG", quality=100)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+        # Convert to numpy array and then to PIL image
+        image = Image.fromarray(tensor.numpy(), mode="RGB")
+
+        # Encode to base64
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=100)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     def get_image_data(self, base64_image):
         image_data = {
