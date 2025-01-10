@@ -1311,6 +1311,8 @@ class LiteLLMImageCaptioningProvider:
         # Define the callable function for captioning
         def captioning_function(new_prompt=None, new_image=None):
             import litellm
+            litellm.set_verbose = False
+            litellm.suppress_debug_info = True
 
             messages = base_messages.copy()
 
