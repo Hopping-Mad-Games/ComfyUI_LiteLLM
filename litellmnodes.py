@@ -120,6 +120,7 @@ class LiteLLMModelProvider:
                              "openai/gpt-4o-mini",
                              "openai/gpt-4o",
                              "openai/gpt-4o-2024-08-06",
+                             "together_ai/deepseek-ai/DeepSeek-V3"
 
                          ],
 
