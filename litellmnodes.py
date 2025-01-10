@@ -1221,6 +1221,8 @@ class LiteLLMCompletionProvider:
 
         return (completion_function,)
 
+
+
 @litellm_base
 class LiteLLMImageCaptioningProvider:
     @classmethod
@@ -1233,20 +1235,21 @@ class LiteLLMImageCaptioningProvider:
                 "top_p": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "frequency_penalty": ("FLOAT", {"default": 0}),
                 "presence_penalty": ("FLOAT", {"default": 0}),
-                "image": ("IMAGE", {"default": None}),  # Image input for captioning
             },
             "optional": {
+                "image": ("IMAGE", {"default": None}),  # Optional image input
                 "prompt": ("STRING", {"default": "Describe the image:", "multiline": True}),
                 "messages": ("LLLM_MESSAGES", {"default": None}),
             }
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("Caption",)
+    RETURN_TYPES = ("CALLABLE",)
+    RETURN_NAMES = ("Captioning function",)
 
     def tensor_image_to_base64(self, tensor):
-        import base64
+        from PIL import Image
         from io import BytesIO
+        import base64
 
         tensor = tensor.mul(255).byte()  # Convert to 0-255
         image = Image.fromarray(tensor.numpy())
@@ -1264,13 +1267,7 @@ class LiteLLMImageCaptioningProvider:
         return image_data
 
     def handler(self, **kwargs):
-        import litellm
         from copy import deepcopy
-        from PIL import Image
-        from io import BytesIO
-        import base64
-
-        litellm.drop_params = True
 
         model = kwargs.get('model', 'anthropic/claude-3.5-sonnet')
         messages = kwargs.get('messages', [])
@@ -1283,31 +1280,65 @@ class LiteLLMImageCaptioningProvider:
         image = kwargs.get('image', None)
         prompt = kwargs.get('prompt', "Describe the image:")
 
-        # Encode image to base64
-        base64_image = self.tensor_image_to_base64(image)
-        image_data = self.get_image_data(base64_image)
+        # Encode image to base64 if provided
+        base64_image = None
+        if image is not None:
+            base64_image = self.tensor_image_to_base64(image)
 
-        # Append the image data to the messages
-        messages.append({"role": "user", "content": [{"type": "text", "text": prompt}, image_data]})
+        # Append the initial prompt and image (if provided) to the messages
+        base_messages = messages.copy()
+        if base64_image:
+            image_data = self.get_image_data(base64_image)
+            base_messages.append({"role": "user", "content": [{"type": "text", "text": prompt}, image_data]})
+        else:
+            base_messages.append({"role": "user", "content": prompt})
 
-        # Call LiteLLM for image captioning
-        response = litellm.completion(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            frequency_penalty=frequency_penalty,
-            presence_penalty=presence_penalty,
-        )
+        # Define the callable function for captioning
+        def captioning_function(new_prompt=None, new_image=None):
+            import litellm
 
-        # Extract the caption from the response
-        response_choices = response.choices
-        response_first_choice = response_choices[0]
-        response_first_choice_message = response_first_choice.message
-        caption = response_first_choice_message.content or ""
+            messages = base_messages.copy()
 
-        return (caption,)
+            # Update the prompt if a new one is provided
+            if new_prompt:
+                if isinstance(messages[-1]["content"], list):
+                    # If the last message contains an image, update the text part
+                    messages[-1]["content"][0]["text"] = new_prompt
+                else:
+                    # If it's a text-only message, update the content
+                    messages[-1]["content"] = new_prompt
+
+            # Update the image if a new one is provided
+            if new_image is not None:
+                new_base64_image = self.tensor_image_to_base64(new_image)
+                new_image_data = self.get_image_data(new_base64_image)
+                if isinstance(messages[-1]["content"], list):
+                    # If the last message contains an image, replace it
+                    messages[-1]["content"][1] = new_image_data
+                else:
+                    # If it's a text-only message, append the image
+                    messages[-1]["content"] = [{"type": "text", "text": new_prompt or prompt}, new_image_data]
+
+            # Call LiteLLM for captioning
+            response = litellm.completion(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+            )
+
+            # Extract the caption from the response
+            response_choices = response.choices
+            response_first_choice = response_choices[0]
+            response_first_choice_message = response_first_choice.message
+            caption = response_first_choice_message.content or ""
+            return caption
+
+        return (captioning_function,)
+
 
 
 @litellm_base
