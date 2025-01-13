@@ -70,7 +70,7 @@ class DocumentProcessorNode(LightRAGBaseNode):
         chunk_overlap_token_size = kwargs.get("chunk_overlap_token_size", 100)
         llm_model_name = kwargs.get("llm_model_name", "meta-llama/Llama-3.2-1B-Instruct")
         enable_llm_cache = kwargs.get("enable_llm_cache", True)
-        document = kwargs.get("document", None)
+        document = kwargs.get("document", "")
 
         # a few possible scenarios
         # 1. working directory does not exist
@@ -114,6 +114,7 @@ class DocumentProcessorNode(LightRAGBaseNode):
             enable_llm_cache=enable_llm_cache
         )
         if document:
+            document = document.encode("utf-8", errors="surrogatepass")
             rag.insert(document)
 
         return (rag,)
