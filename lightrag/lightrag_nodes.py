@@ -115,7 +115,18 @@ class DocumentProcessorNode(LightRAGBaseNode):
         )
         if document:
             document = document.encode("utf-8", errors="surrogatepass")
-            rag.insert(document)
+
+            try:
+                rag.insert(document)
+            except Exception as e:
+                try:
+                    print(f"Error inserting document: {str(e)}")
+                    print(f"trying to insert as string")
+                    print(f"Document type: {type(document)}")
+                    document = str(document)
+                    rag.insert(document)
+                except Exception as e:
+                    raise Exception(f"Error inserting document: {str(e)}")
 
         return (rag,)
 
