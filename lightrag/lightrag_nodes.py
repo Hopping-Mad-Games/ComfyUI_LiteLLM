@@ -114,15 +114,19 @@ class DocumentProcessorNode(LightRAGBaseNode):
             enable_llm_cache=enable_llm_cache
         )
         if document:
-            document = document.encode("utf-8", errors="surrogatepass")
+            from copy import deepcopy
+            o_doc = deepcopy(document)
+
+            document = document.encode("utf-8", errors="ignore")
+
 
             try:
                 rag.insert(document)
             except Exception as e:
                 try:
                     print(f"Error inserting document: {str(e)}")
-                    print(f"trying to insert as string")
-                    print(f"Document type: {type(document)}")
+                    document = o_doc.encode("utf-8", errors="ignore")
+                    document = document.decode("utf-8")
                     document = str(document)
                     rag.insert(document)
                 except Exception as e:
