@@ -580,6 +580,8 @@ class LiteLLMCompletion:
                         n_kwargs["max_completion_tokens"] = n_kwargs.pop("max_tokens")
                         n_kwargs.pop("temperature", None)
                         n_kwargs.pop("top_p", None)
+                    else:
+                        n_kwargs.pop("reasoning_effort", None)
 
                     response = litellm.completion(
                         **n_kwargs
@@ -888,6 +890,8 @@ class LitellmCompletionV2:
                     use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
+                else:
+                    use_kwargs.pop("reasoning_effort", None)
 
                 response = litellm.completion(**use_kwargs)
 
@@ -948,9 +952,11 @@ class LitellmCompletionV2:
                 use_kwargs.pop("prompt", None)
 
                 if ("o1" in model) or ("o3" in model):
-                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens", None)
+                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
+                else:
+                    use_kwargs.pop("reasoning_effort", None)
 
                 response = litellm.completion(
                     **use_kwargs
