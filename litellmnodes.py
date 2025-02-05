@@ -961,7 +961,7 @@ class LitellmCompletionV2:
 
                 use_kwargs.pop("prompt", None)
 
-                if ("o1" in model) or ("o3" in model):
+                if ("o1" in use_kwargs["model"]) or ("o3" in use_kwargs["model"]):
                     use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
