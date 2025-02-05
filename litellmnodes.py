@@ -878,15 +878,24 @@ class LitellmCompletionV2:
                     if message_type == "text":
                         last_message["content"].append(image_data)
 
-                response = litellm.completion(
-                    model=model,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    frequency_penalty=frequency_penalty,
-                    presence_penalty=presence_penalty,
-                )
+                use_kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "frequency_penalty": frequency_penalty,
+                    "presence_penalty": presence_penalty,
+                }
+
+                if ("o1" in model) or ("o3" in model):
+                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
+                    use_kwargs.pop("temperature", None)
+                    use_kwargs.pop("top_p", None)
+
+                response = litellm.completion(**use_kwargs)
+
+
             else:  # Other tasks
                 base_schema = {
                     "response_format": {
@@ -941,6 +950,12 @@ class LitellmCompletionV2:
                             use_kwargs["response_format"] = ob
 
                 use_kwargs.pop("prompt", None)
+
+                if ("o1" in model) or ("o3" in model):
+                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens",None)
+                    use_kwargs.pop("temperature", None)
+                    use_kwargs.pop("top_p", None)
+
                 response = litellm.completion(
                     **use_kwargs
                 )
@@ -1403,15 +1418,23 @@ class LiteLLMCompletionProvider:
             # append the prompt to the messages
             messages.append({"content": prompt, "role": "user"})
 
-            ret = litellm.completion(model=model,
-                                     messages=messages,
-                                     stream=False,
-                                     max_tokens=max_tokens,
-                                     temperature=temperature,
-                                     top_p=top_p,
-                                     frequency_penalty=frequency_penalty,
-                                     presence_penalty=presence_penalty,
-                                     )
+            use_kwargs = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "frequency_penalty": frequency_penalty,
+                "presence_penalty": presence_penalty,
+            }
+
+            if ("o1" in model) or ("o3" in model):
+                use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
+                use_kwargs.pop("temperature", None)
+                use_kwargs.pop("top_p", None)
+
+            ret = litellm.completion(**use_kwargs)
             # now extract the actual content
             response_choices = ret.choices
             response_first_choice = response_choices[0]
@@ -1537,16 +1560,23 @@ class LiteLLMImageCaptioningProvider:
                     # If it's a text-only message, append the image
                     messages[-1]["content"] = [{"type": "text", "text": new_prompt or prompt}, new_image_data]
 
+            use_kwargs = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "frequency_penalty": frequency_penalty,
+                "presence_penalty": presence_penalty,
+            }
+
+            if ("o1" in model) or ("o3" in model):
+                use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
+                use_kwargs.pop("temperature", None)
+                use_kwargs.pop("top_p", None)
+
             # Call LiteLLM for captioning
-            response = litellm.completion(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                frequency_penalty=frequency_penalty,
-                presence_penalty=presence_penalty,
-            )
+            response = litellm.completion(**use_kwargs)
 
             # Extract the caption from the response
             response_choices = response.choices
