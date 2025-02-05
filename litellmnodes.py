@@ -965,8 +965,11 @@ class LitellmCompletionV2:
                     use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
+                    print("o1 or o3")
                 else:
                     use_kwargs.pop("reasoning_effort", None)
+                    print("NOT o1 or o3")
+                print(list(use_kwargs.keys()))
 
                 response = litellm.completion(
                     **use_kwargs
