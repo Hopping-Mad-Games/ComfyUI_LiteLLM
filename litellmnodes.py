@@ -898,7 +898,7 @@ class LitellmCompletionV2:
                     use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
-                    use_kwargs.pop("logt_bias", None)
+                    use_kwargs.pop("logit_bias", None)
                     print("o1 or o3")
                 else:
                     use_kwargs.pop("reasoning_effort", None)
@@ -966,7 +966,7 @@ class LitellmCompletionV2:
                     use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
-                    use_kwargs.pop("logt_bias", None)
+                    use_kwargs.pop("logit_bias", None)
                     print("o1 or o3")
                 else:
                     use_kwargs.pop("reasoning_effort", None)
@@ -1450,7 +1450,7 @@ class LiteLLMCompletionProvider:
                 use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                 use_kwargs.pop("temperature", None)
                 use_kwargs.pop("top_p", None)
-                use_kwargs.pop("logt_bias", None)
+                use_kwargs.pop("logit_bias", None)
 
 
             ret = litellm.completion(**use_kwargs)
@@ -1593,7 +1593,7 @@ class LiteLLMImageCaptioningProvider:
                 use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                 use_kwargs.pop("temperature", None)
                 use_kwargs.pop("top_p", None)
-                use_kwargs.pop("logt_bias", None)
+                use_kwargs.pop("logit_bias", None)
 
             # Call LiteLLM for captioning
             response = litellm.completion(**use_kwargs)
