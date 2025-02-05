@@ -61,6 +61,79 @@ class HTMLRenderer:
         ret = {"ui": {"string": [new_html_content]}, "result": (html_content,)}
         return ret
 
+
+import base64
+import io
+
+import numpy as np
+import torch
+from PIL import Image
+
+
+@litellm_base
+class HTMLRendererScreenshot:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "html_content": ("STRING", {"multiline": True, "default": "<h2>Hello World!</h2>"}),
+                "screenshot_base64": ("STRING", {"default": ""}),
+            }
+        }
+
+    # We will return two things:
+    #   1) An IMAGE => your screenshot as a float BHWC tensor
+    #   2) A STRING => the actual iframe code (so the client can display the HTML)
+    RETURN_TYPES = ("IMAGE", "STRING",)
+    FUNCTION = "handler"
+    OUTPUT_NODE = True
+
+    NAME = "HTMLRendererScreenshot"
+
+    def handler(self, html_content, screenshot_base64):
+        magic = """setTimeout(() => {
+        html2canvas(document.body, {
+            allowTaint : true,
+            logging: true,
+            profile: true,
+            useCORS: true
+            }).then(function(canvas) {
+            document.getElementById('screen').appendChild(canvas);     
+        }); }000);"""
+
+        # 1) Create the iframe code from the user's HTML
+        #    We replace " to ' in the HTML to avoid messing up the srcdoc attribute.
+        #safe_html = html_content.replace("'", '"')
+        safe_html = html_content.replace('"', "'")
+        iframe_code = """<iframe id="htmlRendererScreenshotFrame" srcdoc="{safe_html}" style="width:100%; height:800px; border:none;"> </iframe> """
+        #iframe_code = iframe_code.replace("\n", " ")
+        #iframe_code = iframe_code.replace("\r", " ")
+        #iframe_code = iframe_code.replace("\t", " ")
+        iframe_code = iframe_code.replace("{safe_html}", safe_html)
+
+
+        # 2) If we have no screenshot, return a 1×1 black image as a placeholder
+        if not screenshot_base64.strip():
+            # shape = (batch=1, height=1, width=1, channels=3)
+            arr = np.zeros((1, 1, 1, 3), dtype=np.float32)
+            tensor = torch.from_numpy(arr)
+            ret = {"ui": {"string": ["no image"]}, "result": (tensor, html_content,)}
+            return ret
+
+
+        # Otherwise, decode the base64 screenshot into a float [0..1] BHWC tensor
+        raw_bytes = base64.b64decode(screenshot_base64)
+        pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+
+        arr = np.array(pil_img, dtype=np.float32) / 255.0
+        arr = np.expand_dims(arr, axis=0)  # (1, H, W, 3)
+        tensor = torch.from_numpy(arr).contiguous()
+
+        # Return both the image and the iframe code
+        #return (tensor, iframe_code)
+        ret = {"ui": {"string": [iframe_code]}, "result": (tensor,html_content,)}
+        return ret
+
 import markdown
 @litellm_base
 class MarkdownNode:
@@ -68,6 +141,7 @@ class MarkdownNode:
     A ComfyUI node that renders Markdown input as HTML in the content area while
     passing the raw Markdown string as output.
     """
+
     def __init__(self):
         pass
 
@@ -93,6 +167,129 @@ class MarkdownNode:
             "result": (markdown_input,),  # Raw Markdown output
         }
         return ret
+
+
+@litellm_base
+class LiteLLMModelProviderAdv:
+    # Hard-coded pricing (per 1M tokens) for known modern OpenAI models.
+    # Pricing values are based on your provided table.
+    OPENAI_MODEL_COSTS = {
+        # GPT-4o and variants:
+        "openai/gpt-4o": "Input: $2.50/1M, Cached: $1.25/1M, Output: $10.00/1M tokens",
+        "openai/gpt-4o-2024-08-06": "Input: $2.50/1M, Cached: $1.25/1M, Output: $10.00/1M tokens",
+        # GPT-4o audio-preview variants:
+        "openai/gpt-4o-audio-preview": "Input: $2.50/1M, Output: $10.00/1M tokens",
+        "openai/gpt-4o-audio-preview-2024-12-17": "Input: $2.50/1M, Output: $10.00/1M tokens",
+        # GPT-4o realtime-preview variants:
+        "openai/gpt-4o-realtime-preview": "Input: $5.00/1M, Cached: $2.50/1M, Output: $20.00/1M tokens",
+        "openai/gpt-4o-realtime-preview-2024-12-17": "Input: $5.00/1M, Cached: $2.50/1M, Output: $20.00/1M tokens",
+        # GPT-4o mini variants:
+        "openai/gpt-4o-mini": "Input: $0.15/1M, Cached: $0.075/1M, Output: $0.60/1M tokens",
+        "openai/gpt-4o-mini-2024-07-18": "Input: $0.15/1M, Cached: $0.075/1M, Output: $0.60/1M tokens",
+        # GPT-4o mini audio-preview variants:
+        "openai/gpt-4o-mini-audio-preview": "Input: $0.15/1M, Output: $0.60/1M tokens",
+        "openai/gpt-4o-mini-audio-preview-2024-12-17": "Input: $0.15/1M, Output: $0.60/1M tokens",
+        # GPT-4o mini realtime-preview variants:
+        "openai/gpt-4o-mini-realtime-preview": "Input: $0.60/1M, Cached: $0.30/1M, Output: $2.40/1M tokens",
+        "openai/gpt-4o-mini-realtime-preview-2024-12-17": "Input: $0.60/1M, Cached: $0.30/1M, Output: $2.40/1M tokens",
+        # o1 variants:
+        "openai/o1": "Input: $15.00/1M, Cached: $7.50/1M, Output: $60.00/1M tokens",
+        "openai/o1-2024-12-17": "Input: $15.00/1M, Cached: $7.50/1M, Output: $60.00/1M tokens",
+        # o1-mini variants:
+        "openai/o1-mini": "Input: $1.10/1M, Cached: $0.55/1M, Output: $4.40/1M tokens",
+        "openai/o1-mini-2024-09-12": "Input: $1.10/1M, Cached: $0.55/1M, Output: $4.40/1M tokens",
+        # o3-mini variants:
+        "openai/o3-mini": "Input: $1.10/1M, Cached: $0.55/1M, Output: $4.40/1M tokens",
+        "openai/o3-mini-2025-01-31": "Input: $1.10/1M, Cached: $0.55/1M, Output: $4.40/1M tokens",
+        # Also include GPT-3.5 Turbo and GPT-4 for completeness:
+        "openai/gpt-3.5-turbo": "$2.00/1M tokens",
+        "openai/gpt-3.5-turbo-16k": "Input: $3.00/1M, Output: $4.00/1M tokens",
+        "openai/gpt-4": "Input: $30/1M, Output: $60/1M tokens (8K)",
+        "openai/gpt-4-32k": "Input: $60/1M, Output: $120/1M tokens (32K)",
+    }
+
+    # Define the input types for the node; the displayed list is a list of strings with pricing info.
+    @classmethod
+    def INPUT_TYPES(cls):
+        models = cls.get_all_model_display_strings()
+        default = models[0] if models else ""
+        return {
+            "required": {
+                "name": (models, {"default": default}),
+            }
+        }
+
+    # Merge models fetched from OpenAI with hard-coded provider models.
+    @classmethod
+    def get_all_model_display_strings(cls):
+        openai_ids = cls.get_openai_models()  # Fetched OpenAI model IDs (list of strings)
+        other_ids = cls.get_other_models()    # Hard-coded models from other providers
+        openai_display = [cls.format_model_display(model) for model in openai_ids]
+        model_set = set(openai_ids)
+        other_display = []
+        for model in other_ids:
+            if model not in model_set:
+                other_display.append(cls.format_model_display(model))
+        return openai_display + other_display
+
+    # Format the display string for a model.
+    @classmethod
+    def format_model_display(cls, model):
+        if model.startswith("openai/"):
+            cost = cls.OPENAI_MODEL_COSTS.get(model, "cost unknown")
+            return f"{model} ({cost})"
+        else:
+            return model
+
+    # Fetch all OpenAI models using the new client instance.
+    @classmethod
+    def get_openai_models(cls):
+        import os
+        from openai import OpenAI
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        try:
+            response = client.models.list()
+            # Only include models whose IDs contain one of these substrings.
+            valid_substrings = ["gpt-3.5", "gpt-4", "gpt-4o", "o1", "o3"]
+            q = [
+                "openai/"+model.id for model in response.data
+                if any(sub in model.id for sub in valid_substrings)
+            ]
+            return q
+        except Exception:
+            return ["error getting openai models."]
+
+    # Hard-coded list of models from other providers.
+    @classmethod
+    def get_other_models(cls):
+        return [
+            "anthropic/claude-3-haiku-20240307",
+            "anthropic/claude-3-sonnet-20240229",
+            "anthropic/claude-3-opus-20240229",
+            "anthropic/claude-3-5-sonnet-20240620",
+            "bedrock/anthropic.claude-3-haiku-20240307-v1:0",
+            "bedrock/anthropic.claude-3-sonnet-20240229-v1:0",
+            "bedrock/anthropic.claude-3-opus-20240229-v1:0",
+            "bedrock/anthropic.claude-3-5-sonnet-20240620",
+            "vertex_ai/gemini-1.5-pro-preview-0514",
+            "vertex_ai/gemini-1.5-flash-preview-0514",
+            "vertex_ai/meta/llama3-405b-instruct-maas",
+            "together_ai/deepseek-ai/DeepSeek-V3",
+            "together_ai/meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
+        ]
+
+    # Define the return types for the node.
+    RETURN_TYPES = ("LITELLM_MODEL",)
+    RETURN_NAMES = ("Litellm model",)
+
+    # Handler: Extract the actual model ID (by removing the pricing info) and return it.
+    def handler(self, **kwargs):
+        selected = kwargs.get("name", None)
+        if selected and " (" in selected:
+            model_id = selected.split(" (")[0]
+        else:
+            model_id = selected
+        return (model_id,)
 
 
 
@@ -378,6 +575,11 @@ class LiteLLMCompletion:
                         "presence_penalty": presence_penalty
                     }
                     n_kwargs.update(kwargs)
+
+                    if ("o1" in model) or ("o3" in model):
+                        n_kwargs["max_completion_tokens"] = n_kwargs.pop("max_tokens")
+                        n_kwargs.pop("temperature", None)
+                        n_kwargs.pop("top_p", None)
 
                     response = litellm.completion(
                         **n_kwargs
@@ -668,7 +870,7 @@ class LitellmCompletionV2:
                     last_message = messages[-1]
                     if isinstance(last_message["content"], str):
                         message_type = "text"
-                        new_message = {"type":"text", "text": last_message["content"]}
+                        new_message = {"type": "text", "text": last_message["content"]}
                         last_message["content"] = [new_message]
                     else:
                         message_type = last_message["content"][-1]["type"]
@@ -1222,7 +1424,6 @@ class LiteLLMCompletionProvider:
         return (completion_function,)
 
 
-
 @litellm_base
 class LiteLLMImageCaptioningProvider:
     @classmethod
@@ -1355,7 +1556,6 @@ class LiteLLMImageCaptioningProvider:
             return caption
 
         return (captioning_function,)
-
 
 
 @litellm_base
