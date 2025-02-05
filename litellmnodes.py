@@ -55,7 +55,6 @@ class HTMLRenderer:
         new_html_content = html_content.replace("\"", "'")
         new_html_content = f"""<iframe srcdoc="{new_html_content}" style="width: {iframe_width}; height: {iframe_height};border: none;"></iframe>"""
 
-
         # Replace newlines and double quotes in the raw HTML
 
         ret = {"ui": {"string": [new_html_content]}, "result": (html_content,)}
@@ -103,14 +102,13 @@ class HTMLRendererScreenshot:
 
         # 1) Create the iframe code from the user's HTML
         #    We replace " to ' in the HTML to avoid messing up the srcdoc attribute.
-        #safe_html = html_content.replace("'", '"')
+        # safe_html = html_content.replace("'", '"')
         safe_html = html_content.replace('"', "'")
         iframe_code = """<iframe id="htmlRendererScreenshotFrame" srcdoc="{safe_html}" style="width:100%; height:800px; border:none;"> </iframe> """
-        #iframe_code = iframe_code.replace("\n", " ")
-        #iframe_code = iframe_code.replace("\r", " ")
-        #iframe_code = iframe_code.replace("\t", " ")
+        # iframe_code = iframe_code.replace("\n", " ")
+        # iframe_code = iframe_code.replace("\r", " ")
+        # iframe_code = iframe_code.replace("\t", " ")
         iframe_code = iframe_code.replace("{safe_html}", safe_html)
-
 
         # 2) If we have no screenshot, return a 1×1 black image as a placeholder
         if not screenshot_base64.strip():
@@ -119,7 +117,6 @@ class HTMLRendererScreenshot:
             tensor = torch.from_numpy(arr)
             ret = {"ui": {"string": ["no image"]}, "result": (tensor, html_content,)}
             return ret
-
 
         # Otherwise, decode the base64 screenshot into a float [0..1] BHWC tensor
         raw_bytes = base64.b64decode(screenshot_base64)
@@ -130,11 +127,14 @@ class HTMLRendererScreenshot:
         tensor = torch.from_numpy(arr).contiguous()
 
         # Return both the image and the iframe code
-        #return (tensor, iframe_code)
-        ret = {"ui": {"string": [iframe_code]}, "result": (tensor,html_content,)}
+        # return (tensor, iframe_code)
+        ret = {"ui": {"string": [iframe_code]}, "result": (tensor, html_content,)}
         return ret
 
+
 import markdown
+
+
 @litellm_base
 class MarkdownNode:
     """
@@ -223,7 +223,7 @@ class LiteLLMModelProviderAdv:
     @classmethod
     def get_all_model_display_strings(cls):
         openai_ids = cls.get_openai_models()  # Fetched OpenAI model IDs (list of strings)
-        other_ids = cls.get_other_models()    # Hard-coded models from other providers
+        other_ids = cls.get_other_models()  # Hard-coded models from other providers
         openai_display = [cls.format_model_display(model) for model in openai_ids]
         model_set = set(openai_ids)
         other_display = []
@@ -252,7 +252,7 @@ class LiteLLMModelProviderAdv:
             # Only include models whose IDs contain one of these substrings.
             valid_substrings = ["gpt-3.5", "gpt-4", "gpt-4o", "o1", "o3"]
             q = [
-                "openai/"+model.id for model in response.data
+                "openai/" + model.id for model in response.data
                 if any(sub in model.id for sub in valid_substrings)
             ]
             return q
@@ -290,7 +290,6 @@ class LiteLLMModelProviderAdv:
         else:
             model_id = selected
         return (model_id,)
-
 
 
 @litellm_base
@@ -487,6 +486,7 @@ class LiteLLMCompletion:
                 "frequency_penalty": ("FLOAT", {"default": 0}),
                 "presence_penalty": ("FLOAT", {"default": 0}),
                 "prompt": ("STRING", {"default": "Hello World!", "multiline": True}),
+                "reasoning_effort": (["low", "medium", "high"], {"default": "low"}),
             },
             "optional": {
                 "messages": ("LLLM_MESSAGES", {"default": None}),
@@ -512,7 +512,7 @@ class LiteLLMCompletion:
             kwargs["frequency_penalty"] = None
         if kwargs["presence_penalty"] == 0:
             kwargs["presence_penalty"] = None
-
+        reasoning_effort = kwargs.get('reasoning_effort', "low")
         if isinstance(kwargs["model"], dict):
             _model = model.get("model", "anthropic/claude-3-haiku-20240307")
             _type = model.get("type", None)
@@ -567,12 +567,12 @@ class LiteLLMCompletion:
                     n_kwargs = {
                         "model": model,
                         "messages": messages,
-                        "stream": False,
                         "max_tokens": max_tokens,
                         "temperature": temperature,
                         "top_p": top_p,
                         "frequency_penalty": frequency_penalty,
-                        "presence_penalty": presence_penalty
+                        "presence_penalty": presence_penalty,
+                        "reasoning_effort": reasoning_effort,
                     }
                     n_kwargs.update(kwargs)
 
@@ -653,23 +653,18 @@ class LitellmCompletionV2:
     @classmethod
     def INPUT_TYPES(cls):
         valid_tasks = cls.get_valid_tasks()
-        return {
-            "required": {
-                "model": ("LITELLM_MODEL", {"default": "anthropic/claude-3.5-sonnet"}),
-                "max_tokens": ("INT", {"default": 250, "min": 1, "max": 1e10, "step": 1}),
-                "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
-                "top_p": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
-                "frequency_penalty": ("FLOAT", {"default": 0}),
-                "presence_penalty": ("FLOAT", {"default": 0}),
-                "prompt": ("STRING", {"default": "Hello World!", "multiline": True}),
-                "task": (valid_tasks, {"default": "completion"})  # Use a dropdown list for valid tasks
-            },
+        default = LiteLLMCompletion.INPUT_TYPES()["required"]
+        default["task"] = (valid_tasks, {"default": "completion"})
+
+        out = {
+            "required": default,
             "optional": {
                 "image": ("IMAGE", {"default": None}),  # Assuming image_tensor is the PyTorch tensor
                 "messages": ("LLLM_MESSAGES", {"default": None}),
                 "use_cached_response": ("BOOLEAN", {"default": False}),
             }
         }
+        return out
 
     RETURN_TYPES = ("LITELLM_MODEL", "LLLM_MESSAGES", "STRING", "LIST", "STRING",)
     RETURN_NAMES = ("Model", "Messages", "Completion", "[Completions]", "Usage",)
@@ -845,8 +840,8 @@ class LitellmCompletionV2:
 
         return (model, messages, responses[0], responses, usage,)
 
-    def litellm_completion_v2_inner(self, frequency_penalty, max_tokens, messages, model, presence_penalty, prompt,
-                                    task, temperature, top_p, image_data=None):
+    def litellm_completion_v2_inner(self, frequency_penalty, max_tokens, messages, model, presence_penalty,
+                                    prompt, reasoning_effort="low", task="completion", temperature=1.0, top_p=1.0, image_data=None):
         from copy import deepcopy
         import json
         # deepcopy all the inputs
@@ -886,6 +881,7 @@ class LitellmCompletionV2:
                     "top_p": top_p,
                     "frequency_penalty": frequency_penalty,
                     "presence_penalty": presence_penalty,
+                    "reasoning_effort": reasoning_effort,
                 }
 
                 if ("o1" in model) or ("o3" in model):
@@ -952,7 +948,7 @@ class LitellmCompletionV2:
                 use_kwargs.pop("prompt", None)
 
                 if ("o1" in model) or ("o3" in model):
-                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens",None)
+                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens", None)
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
 
