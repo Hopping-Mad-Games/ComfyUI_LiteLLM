@@ -898,6 +898,7 @@ class LitellmCompletionV2:
                     use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
+                    use_kwargs.pop("logt_bias", None)
                     print("o1 or o3")
                 else:
                     use_kwargs.pop("reasoning_effort", None)
@@ -965,6 +966,7 @@ class LitellmCompletionV2:
                     use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                     use_kwargs.pop("temperature", None)
                     use_kwargs.pop("top_p", None)
+                    use_kwargs.pop("logt_bias", None)
                     print("o1 or o3")
                 else:
                     use_kwargs.pop("reasoning_effort", None)
@@ -1444,10 +1446,12 @@ class LiteLLMCompletionProvider:
                 "presence_penalty": presence_penalty,
             }
 
-            if ("o1" in model) or ("o3" in model):
+            if ("o1" in use_kwargs["model"]) or ("o3" in use_kwargs["model"]):
                 use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                 use_kwargs.pop("temperature", None)
                 use_kwargs.pop("top_p", None)
+                use_kwargs.pop("logt_bias", None)
+
 
             ret = litellm.completion(**use_kwargs)
             # now extract the actual content
@@ -1585,10 +1589,11 @@ class LiteLLMImageCaptioningProvider:
                 "presence_penalty": presence_penalty,
             }
 
-            if ("o1" in model) or ("o3" in model):
+            if ("o1" in use_kwargs["model"]) or ("o3" in use_kwargs["model"]):
                 use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
                 use_kwargs.pop("temperature", None)
                 use_kwargs.pop("top_p", None)
+                use_kwargs.pop("logt_bias", None)
 
             # Call LiteLLM for captioning
             response = litellm.completion(**use_kwargs)
