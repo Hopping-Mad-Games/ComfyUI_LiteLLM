@@ -291,6 +291,7 @@ class AgentNode(AgentBaseNode):
         initial_completion = None
         if kwargs["messages"]:
             assistant_messages = [
+
                 msg["content"] for msg in kwargs["messages"]
                 if msg["role"] == "assistant"
             ]
@@ -304,6 +305,10 @@ class AgentNode(AgentBaseNode):
 
         try:
             loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
