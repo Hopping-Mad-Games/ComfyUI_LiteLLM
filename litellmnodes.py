@@ -1222,140 +1222,185 @@ class LiteLLMCompletionPrePend(LiteLLMCompletion):
 
 @litellm_base
 class LiteLLMCompletionListOfPrompts:
-    """Calls LiteLLMCompletion for each prompt in the list asynchronously or synchronously,
-       returning completions and corresponding messages."""
+    """Calls LiteLLMCompletion for each prompt in the list, using corresponding
+       message history, asynchronously or synchronously.
+       Returns completions and resulting messages."""
 
     @classmethod
     def INPUT_TYPES(cls):
-        # Assuming LiteLLMCompletion exists and has INPUT_TYPES defined
-        # If LiteLLMCompletion is not defined here, this part needs adjustment
+        # Start with previous version's INPUT_TYPES logic
         try:
             base = LiteLLMCompletion.INPUT_TYPES()
-            # Ensure 'required' exists and 'prompt' is removable
             if "required" in base and "prompt" in base["required"]:
                  base["required"]["pre_prompt"] = base["required"]["prompt"]
                  base["required"].pop("prompt")
             elif "required" not in base:
-                 base["required"] = {} # Initialize if missing
-                 base["required"]["pre_prompt"] = ("STRING", {"multiline": True, "default": ""}) # Add default if needed
+                 base["required"] = {}
+                 base["required"]["pre_prompt"] = ("STRING", {"multiline": True, "default": ""})
 
             base["required"]["prompts"] = ("LIST", {"default": None})
+            # --- Add messages list input ---
+            base["required"]["messages"] = ("LIST", {"default": None}) # List of message histories
+            # --- End Add ---
             base["required"]["async"] = ("BOOLEAN", {"default": True})
         except NameError:
-             # Fallback if LiteLLMCompletion is not available in this scope
              print("Warning: LiteLLMCompletion class not found for INPUT_TYPES definition.")
+             # Fallback with messages input
              base = {
                  "required": {
-                     "model": ("STRING", {"default": "gpt-3.5-turbo"}), # Example fallback
-                     "temperature": ("FLOAT", {"default": 0.7}),    # Example fallback
-                     "top_p": ("FLOAT", {"default": 1.0}),       # Example fallback
-                     "max_tokens": ("INT", {"default": 100}),     # Example fallback
+                     "model": ("STRING", {"default": "gpt-3.5-turbo"}),
+                     "temperature": ("FLOAT", {"default": 0.7}),
+                     "top_p": ("FLOAT", {"default": 1.0}),
+                     "max_tokens": ("INT", {"default": 100}),
                      "pre_prompt": ("STRING", {"multiline": True, "default": ""}),
                      "prompts": ("LIST", {"default": None}),
+                     # --- Add messages list input ---
+                     "messages": ("LIST", {"default": None}),
+                     # --- End Add ---
                      "async": ("BOOLEAN", {"default": True}),
                  }
              }
         return base
 
-    # --- Updated RETURN types and names ---
+    # Return types remain the same as the previous version
     RETURN_TYPES = ("LITELLM_MODEL", "LIST", "LIST", "STRING",)
     RETURN_NAMES = ("Model", "Completions", "Messages", "Usage",)
-    # --- End Update ---
 
-    # This helper likely remains the same, it already gets the full result tuple
+    # Helper remains the same
     def wrapped_llm_call(self, index, **kwargs):
-        # Assuming LiteLLMCompletion().handler returns: (model, messages, completion, usage)
+        # Assuming LiteLLMCompletion().handler accepts 'messages' kwarg
+        # and returns: (model, resulting_messages, completion, usage)
         return (index, LiteLLMCompletion().handler(**kwargs))
 
-    # Modified to return messages and completion along with index
-    async def async_process_prompt(self, index, prompt, pre_prompt, **kwargs):
+    # Modified to accept message_history and use it
+    async def async_process_prompt(self, index, prompt, pre_prompt, message_history, **kwargs):
         import asyncio
         import functools
 
-        kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
+        # --- Prepare messages list ---
+        # Combine pre_prompt and current prompt into the final user message content
+        user_content = f"{pre_prompt}\n{prompt}" if pre_prompt else prompt
+        user_message = {"role": "user", "content": user_content}
+
+        # Append the new user message to the provided history for this prompt
+        # Ensure message_history is a list (should be guaranteed by handler validation)
+        final_messages = message_history + [user_message]
+
+        # Remove 'prompt' if it exists in kwargs, pass 'messages' instead
+        if "prompt" in kwargs:
+            kwargs.pop("prompt")
+        kwargs["messages"] = final_messages
+        # --- End Prepare ---
+
         loop = asyncio.get_running_loop()
+        # Pass modified kwargs down
         partial_func = functools.partial(self.wrapped_llm_call, index, **kwargs)
 
-        # Run the synchronous handler in an executor
-        # wrapped_llm_call returns -> (index, (model, messages, completion, usage))
         idx, the_rest = await loop.run_in_executor(None, partial_func)
-        model, messages, completion, usage = the_rest # Unpack the result from handler
+        # Unpack results from the underlying handler call
+        model, resulting_messages, completion, usage = the_rest
 
-        # --- Return messages and completion ---
-        return idx, messages, completion
-        # --- End Update ---
+        # Return index, the resulting messages, and the completion
+        return idx, resulting_messages, completion
 
-    # Modified to return messages and completion
-    def process_prompt(self, prompt, pre_prompt, **kwargs):
-        kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
-        # Assuming handler returns -> (model, messages, completion, usage)
-        model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
-        # --- Return messages and completion ---
-        return messages, completion
-        # --- End Update ---
+    # Modified to accept message_history and use it
+    def process_prompt(self, prompt, pre_prompt, message_history, **kwargs):
+        # --- Prepare messages list (same logic as async) ---
+        user_content = f"{pre_prompt}\n{prompt}" if pre_prompt else prompt
+        user_message = {"role": "user", "content": user_content}
+        final_messages = message_history + [user_message]
 
-    # Modified to collect and return both messages and completions lists
-    async def process_prompts(self, prompts, pre_prompt, **kwargs):
+        if "prompt" in kwargs:
+            kwargs.pop("prompt")
+        kwargs["messages"] = final_messages
+        # --- End Prepare ---
+
+        # Call the underlying handler with the prepared messages
+        model, resulting_messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
+
+        # Return the resulting messages and the completion
+        return resulting_messages, completion
+
+    # Modified to pass down the corresponding message history
+    async def process_prompts(self, prompts, pre_prompt, messages_input_list, **kwargs):
         import asyncio
 
-        # Clean kwargs specific to this node before passing down
-        if "pre_prompt" in kwargs:
-            kwargs.pop("pre_prompt")
-        if "prompts" in kwargs: # Remove prompts list from individual calls
-             kwargs.pop("prompts")
-        if "async" in kwargs: # Remove async flag from individual calls
-             kwargs.pop("async")
+        # Clean kwargs specific to this node
+        if "pre_prompt" in kwargs: kwargs.pop("pre_prompt")
+        if "prompts" in kwargs: kwargs.pop("prompts")
+        if "messages" in kwargs: kwargs.pop("messages") # Remove the list of lists
+        if "async" in kwargs: kwargs.pop("async")
 
-        tasks = [self.async_process_prompt(i, prompt, pre_prompt, **kwargs) for i, prompt in enumerate(prompts)]
-        # Results will be list of (idx, messages, completion) tuples
+        # --- Pass corresponding message_history[i] to each task ---
+        tasks = [
+            self.async_process_prompt(i, prompt, pre_prompt, messages_input_list[i], **kwargs)
+            for i, prompt in enumerate(prompts)
+        ]
+        # --- End Update ---
+
         results = await asyncio.gather(*tasks)
-
-        # Sort results by original index to maintain order
         sorted_results = sorted(results, key=lambda x: x[0])
 
-        # --- Separate messages and completions into aligned lists ---
+        # Separate results (structure is now idx, resulting_messages, completion)
         completions_list = [completion for idx, messages, completion in sorted_results]
-        messages_list = [messages for idx, messages, completion in sorted_results]
+        messages_list = [messages for idx, messages, completion in sorted_results] # These are the *output* messages
         return completions_list, messages_list
-        # --- End Update ---
 
 
     def handler(self, **kwargs):
         import asyncio
-        prompts = kwargs.pop("prompts", ["Hello World!"]) # Use pop to remove from kwargs passed down
-        pre_prompt = kwargs.pop("pre_prompt", "")        # Use pop
-        run_async = kwargs.pop("async", True)              # Use pop and store value
+        import sys # Import sys for stderr
 
-        # Initialize result lists
+        prompts = kwargs.pop("prompts", []) # Default to empty list
+        pre_prompt = kwargs.pop("pre_prompt", "")
+        # --- Get the list of input message histories ---
+        messages_input_list = kwargs.pop("messages", None)
+        # --- End Get ---
+        run_async = kwargs.pop("async", True)
+
         completions_list = []
-        messages_list = []
-        usage_str = "" # Usage aggregation not implemented here
+        messages_output_list = [] # Stores the *output* messages from LLM calls
+        usage_str = ""
+
+        # --- Validate/Prepare messages_input_list ---
+        if not prompts: # Handle case of empty prompts list
+             print("Warning: Empty 'prompts' list provided.", file=sys.stderr)
+             messages_input_list = [] # Ensure messages list is also empty
+        elif messages_input_list is None or len(messages_input_list) != len(prompts):
+            print(f"Warning: Input 'messages' list is None or length ({len(messages_input_list) if messages_input_list else 'None'}) "
+                  f"mismatches 'prompts' length ({len(prompts)}). Using empty history for all prompts.", file=sys.stderr)
+            # Create default empty history for each prompt
+            messages_input_list = [[] for _ in range(len(prompts))] # Use range for safety if prompts is empty
+        # Ensure each item in messages_input_list is actually a list
+        messages_input_list = [hist if isinstance(hist, list) else [] for hist in messages_input_list]
+        # --- End Validation ---
+
 
         if run_async:
-            # --- Modified Async Path ---
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                # process_prompts now returns (completions_list, messages_list)
-                completions_list, messages_list = loop.run_until_complete(
-                    self.process_prompts(prompts, pre_prompt, **kwargs)
+                # Pass the prepared messages_input_list to process_prompts
+                completions_list, messages_output_list = loop.run_until_complete(
+                    self.process_prompts(prompts, pre_prompt, messages_input_list, **kwargs)
                 )
             finally:
                 loop.close()
-            # --- End Update ---
         else:
-            # --- Modified Sync Path ---
-            for prompt in prompts:
-                # process_prompt now returns (messages, completion)
-                messages, completion = self.process_prompt(prompt, pre_prompt, **kwargs)
-                messages_list.append(messages)
-                completions_list.append(completion)
-            # --- End Update ---
+            # Sync Path: Iterate with index to get corresponding message history
+            for i, prompt in enumerate(prompts):
+                 # Get the specific history for this prompt
+                 message_history = messages_input_list[i]
+                 # Pass history to process_prompt
+                 resulting_messages, completion = self.process_prompt(
+                     prompt, pre_prompt, message_history, **kwargs
+                 )
+                 messages_output_list.append(resulting_messages)
+                 completions_list.append(completion)
 
-        # --- Update return tuple to include messages_list ---
-        # Ensure the order matches RETURN_TYPES and RETURN_NAMES
-        return (kwargs.get("model"), completions_list, messages_list, usage_str,)
-        # --- End Update ---
+        # Return signature remains the same (Model, Completions, Output_Messages, Usage)
+        return (kwargs.get("model"), completions_list, messages_output_list, usage_str,)
+
 
 
 @litellm_base
