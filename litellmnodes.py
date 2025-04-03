@@ -1240,24 +1240,7 @@ class LiteLLMCompletionListOfPrompts:
 
         base["required"]["prompts"] = ("LIST", {"default": None})
         base["required"]["async"] = ("BOOLEAN", {"default": True})
-
-        # --- Define messages list input as OPTIONAL ---
-        # Try to get the type from the base class's optional definition (e.g., LLLM_MESSAGES)
-        base_optional = base.get("optional", {})
-        messages_definition = base_optional.get("messages", ("LIST", {"default": None})) # Default to LIST if not found
-
-        if "optional" not in base:
-             base["optional"] = {} # Ensure the optional dictionary exists
-
-        # Add/overwrite 'messages' in the optional section for this node
-        # The input is a LIST of whatever the base message type is.
-        # Defaulting the list itself to None makes it optional.
-        base["optional"]["messages"] = (messages_definition[0], {"default": None})
-        # --- End Define as Optional ---
-
-
-        # Ensure the original 'messages' optional input (if it existed) doesn't conflict
-        # In this case, by setting it above, we effectively use/overwrite it.
+        base["optional"]["messages"] =("LIST", {"default": None})
 
         return base
 
