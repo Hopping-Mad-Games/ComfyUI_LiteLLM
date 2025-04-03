@@ -993,62 +993,99 @@ class PDFToImageNode:
             "required": {
                 "pdf_path": ("STRING", {"default": "path/to/your/pdf/file.pdf"}),
                 "dpi": ("INT", {"default": 200, "min": 72, "max": 600}),
+                 # Page numbers are 1-based for user input consistency
                 "first_page": ("INT", {"default": 1, "min": 1}),
+                 # -1 or 0 means process until the end
                 "last_page": ("INT", {"default": -1}),
             },
         }
 
+    # Output is a batch of images suitable for ComfyUI IMAGE type
     RETURN_TYPES = ("IMAGE",)
-
-    def convert_from_path(self, pdf_path, dpi=200, first_page=1, last_page=-1, output_folder=None):
-        import pdfplumber
-
-        if last_page == 0:
-            last_page = -1
-        out = []
-        with pdfplumber.open(pdf_path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                if i < first_page - 1:
-                    continue
-                if last_page > 0 and i >= last_page:
-                    break
-
-                pil_image = page.to_image(resolution=dpi)
-                out.append(pil_image)
-        return out
+    FUNCTION = "handler" # Function to execute
 
     def handler(self, pdf_path, dpi, first_page, last_page):
-        import os
-        import tempfile
-        import numpy as np
-
+        import pymupdf,sys
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            images = self.convert_from_path(pdf_path, dpi=dpi, first_page=first_page,
-                                            last_page=last_page, output_folder=temp_dir)
-            images = [i.original for i in images]
-            # Convert PIL Images to torch tensors
-            tensor_images = []
-            for img in images:
-                # Convert PIL Image to RGB mode
-                img_rgb = img.convert('RGB')
-                # Convert to numpy array and normalize
-                np_image = np.array(img_rgb).astype(np.float32) / 255.0
-                # Convert to torch tensor and add batch dimension
-                tensor_image = torch.from_numpy(np_image).unsqueeze(0)
-                tensor_images.append(tensor_image)
+        page_tensors = []
+        doc = None # Initialize doc to None for finally block
 
-            # Stack all images into a single tensor
-            batch_images = torch.cat(tensor_images, dim=0)
+        try:
+            # 1. Open PDF with PyMuPDF
+            doc = pymupdf.open(pdf_path)
+            num_pages = doc.page_count
 
-        # The output tensor is in the format [B, H, W, C], where:
-        # B: Batch size (number of pages)
-        # H: Height of each image
-        # W: Width of each image
-        # C: Number of channels (3 for RGB)
-        # Values are normalized to the range 0.0 to 1.0
+            # 2. Determine page range (0-based index for PyMuPDF)
+            start_index = max(0, first_page - 1)
+            # Handle last_page: <=0 means 'to the end'
+            if last_page <= 0 or last_page > num_pages:
+                end_index = num_pages - 1
+            else:
+                end_index = last_page - 1 # Convert 1-based to 0-based
+
+            # Check for invalid range
+            if start_index >= num_pages or start_index > end_index:
+                raise ValueError(f"Invalid page range ({first_page}-{last_page}) for PDF with {num_pages} pages.")
+
+            # 3. Calculate zoom factor from DPI (base is 72 DPI for PDFs)
+            zoom_factor = dpi / 72.0
+            render_matrix = pymupdf.Matrix(zoom_factor, zoom_factor)
+
+            # 4. Iterate through the specified page range
+            for i in range(start_index, end_index + 1):
+                page = doc.load_page(i)
+
+                # 5. Render page to RGB pixmap using get_pixmap
+                #    alpha=False ensures 3 channels (RGB)
+                pix = page.get_pixmap(matrix=render_matrix, alpha=False)
+                height, width, channels = pix.height, pix.width, pix.n
+
+                # Ensure we got an RGB image (3 channels)
+                if channels != 3:
+                    print(f"Warning: Page {i+1} rendered with {channels} channels (expected 3 for RGB). Skipping page.", file=sys.stderr)
+                    # Attempt conversion if RGBA? For simplicity, we skip non-RGB here.
+                    # If RGBA (channels=4), you could potentially slice: np_array = np_array[:, :, :3]
+                    continue
+
+                # 6. Convert pixmap samples to NumPy array
+                #    samples are bytes: height * width * channels
+                np_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(height, width, channels)
+
+                # 7. Convert NumPy array to PyTorch Tensor (float32, normalized 0-1)
+                #    from_numpy avoids data copy where possible
+                page_tensor = torch.from_numpy(np_array).float().div(255.0) # Shape: (H, W, C)
+
+                page_tensors.append(page_tensor)
+
+        except Exception as e:
+            raise RuntimeError(f"Error processing PDF '{pdf_path}': {e}") from e
+        finally:
+             # Ensure the document is closed even if errors occur
+             if doc:
+                 doc.close()
+
+        # Check if any pages were processed
+        if not page_tensors:
+            # Raise error or return specific empty tensor? Framework dependent.
+            # Raising error is often clearer than returning ambiguous empty tensor.
+            raise ValueError(f"No pages were successfully rendered for PDF '{pdf_path}' in the specified range.")
+
+        # 8. Stack page tensors into a batch tensor (B, H, W, C)
+        try:
+            # torch.stack adds the batch dimension (B)
+            batch_images = torch.stack(page_tensors, dim=0)
+        except RuntimeError as stack_error:
+            # This error typically occurs if pages have different dimensions
+            # even when rendered at the same DPI (e.g., different aspect ratios).
+             raise RuntimeError(
+                 f"Failed to stack page images for '{pdf_path}'. "
+                 f"Pages might have different dimensions after rendering at {dpi} DPI. Error: {stack_error}"
+             ) from stack_error
+
+
+        # Return the stacked tensor in a tuple, as expected by ComfyUI
         return (batch_images,)
 
 
@@ -1185,23 +1222,52 @@ class LiteLLMCompletionPrePend(LiteLLMCompletion):
 
 @litellm_base
 class LiteLLMCompletionListOfPrompts:
-    """Calls LiteLLMCompletion for each prompt in the list asynchronously"""
+    """Calls LiteLLMCompletion for each prompt in the list asynchronously or synchronously,
+       returning completions and corresponding messages."""
 
     @classmethod
     def INPUT_TYPES(cls):
-        base = LiteLLMCompletion.INPUT_TYPES()
-        base["required"]["pre_prompt"] = base["required"]["prompt"]
-        base["required"].pop("prompt")
-        base["required"]["prompts"] = ("LIST", {"default": None})
-        base["required"]["async"] = ("BOOLEAN", {"default": True})
+        # Assuming LiteLLMCompletion exists and has INPUT_TYPES defined
+        # If LiteLLMCompletion is not defined here, this part needs adjustment
+        try:
+            base = LiteLLMCompletion.INPUT_TYPES()
+            # Ensure 'required' exists and 'prompt' is removable
+            if "required" in base and "prompt" in base["required"]:
+                 base["required"]["pre_prompt"] = base["required"]["prompt"]
+                 base["required"].pop("prompt")
+            elif "required" not in base:
+                 base["required"] = {} # Initialize if missing
+                 base["required"]["pre_prompt"] = ("STRING", {"multiline": True, "default": ""}) # Add default if needed
+
+            base["required"]["prompts"] = ("LIST", {"default": None})
+            base["required"]["async"] = ("BOOLEAN", {"default": True})
+        except NameError:
+             # Fallback if LiteLLMCompletion is not available in this scope
+             print("Warning: LiteLLMCompletion class not found for INPUT_TYPES definition.")
+             base = {
+                 "required": {
+                     "model": ("STRING", {"default": "gpt-3.5-turbo"}), # Example fallback
+                     "temperature": ("FLOAT", {"default": 0.7}),    # Example fallback
+                     "top_p": ("FLOAT", {"default": 1.0}),       # Example fallback
+                     "max_tokens": ("INT", {"default": 100}),     # Example fallback
+                     "pre_prompt": ("STRING", {"multiline": True, "default": ""}),
+                     "prompts": ("LIST", {"default": None}),
+                     "async": ("BOOLEAN", {"default": True}),
+                 }
+             }
         return base
 
-    RETURN_TYPES = ("LITELLM_MODEL", "LIST", "STRING",)
-    RETURN_NAMES = ("Model", "Completions", "Usage",)
+    # --- Updated RETURN types and names ---
+    RETURN_TYPES = ("LITELLM_MODEL", "LIST", "LIST", "STRING",)
+    RETURN_NAMES = ("Model", "Completions", "Messages", "Usage",)
+    # --- End Update ---
 
+    # This helper likely remains the same, it already gets the full result tuple
     def wrapped_llm_call(self, index, **kwargs):
+        # Assuming LiteLLMCompletion().handler returns: (model, messages, completion, usage)
         return (index, LiteLLMCompletion().handler(**kwargs))
 
+    # Modified to return messages and completion along with index
     async def async_process_prompt(self, index, prompt, pre_prompt, **kwargs):
         import asyncio
         import functools
@@ -1209,50 +1275,87 @@ class LiteLLMCompletionListOfPrompts:
         kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
         loop = asyncio.get_running_loop()
         partial_func = functools.partial(self.wrapped_llm_call, index, **kwargs)
-        idx, the_rest = await loop.run_in_executor(None, partial_func)
-        model, messages, completion, usage = the_rest
-        return idx, completion
 
+        # Run the synchronous handler in an executor
+        # wrapped_llm_call returns -> (index, (model, messages, completion, usage))
+        idx, the_rest = await loop.run_in_executor(None, partial_func)
+        model, messages, completion, usage = the_rest # Unpack the result from handler
+
+        # --- Return messages and completion ---
+        return idx, messages, completion
+        # --- End Update ---
+
+    # Modified to return messages and completion
     def process_prompt(self, prompt, pre_prompt, **kwargs):
         kwargs["prompt"] = f"{pre_prompt}\n{prompt}"
+        # Assuming handler returns -> (model, messages, completion, usage)
         model, messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
-        return completion
+        # --- Return messages and completion ---
+        return messages, completion
+        # --- End Update ---
 
+    # Modified to collect and return both messages and completions lists
     async def process_prompts(self, prompts, pre_prompt, **kwargs):
         import asyncio
 
+        # Clean kwargs specific to this node before passing down
         if "pre_prompt" in kwargs:
             kwargs.pop("pre_prompt")
-        if "prompt" in kwargs:
-            kwargs.pop("prompt")
+        if "prompts" in kwargs: # Remove prompts list from individual calls
+             kwargs.pop("prompts")
+        if "async" in kwargs: # Remove async flag from individual calls
+             kwargs.pop("async")
 
         tasks = [self.async_process_prompt(i, prompt, pre_prompt, **kwargs) for i, prompt in enumerate(prompts)]
-        completions = await asyncio.gather(*tasks)
-        return [completion for _, completion in sorted(completions, key=lambda x: x[0])]
+        # Results will be list of (idx, messages, completion) tuples
+        results = await asyncio.gather(*tasks)
+
+        # Sort results by original index to maintain order
+        sorted_results = sorted(results, key=lambda x: x[0])
+
+        # --- Separate messages and completions into aligned lists ---
+        completions_list = [completion for idx, messages, completion in sorted_results]
+        messages_list = [messages for idx, messages, completion in sorted_results]
+        return completions_list, messages_list
+        # --- End Update ---
+
 
     def handler(self, **kwargs):
         import asyncio
-        prompts = kwargs.pop("prompts", ["Hello World!"])
-        pre_prompt = kwargs.pop("pre_prompt", "Hello World!")
-        completions = []
+        prompts = kwargs.pop("prompts", ["Hello World!"]) # Use pop to remove from kwargs passed down
+        pre_prompt = kwargs.pop("pre_prompt", "")        # Use pop
+        run_async = kwargs.pop("async", True)              # Use pop and store value
 
-        if kwargs.pop("async", None):
-            # Create a new event loop
+        # Initialize result lists
+        completions_list = []
+        messages_list = []
+        usage_str = "" # Usage aggregation not implemented here
+
+        if run_async:
+            # --- Modified Async Path ---
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-
             try:
-                # Run the async code in the loop
-                completions = loop.run_until_complete(self.process_prompts(prompts, pre_prompt, **kwargs))
+                # process_prompts now returns (completions_list, messages_list)
+                completions_list, messages_list = loop.run_until_complete(
+                    self.process_prompts(prompts, pre_prompt, **kwargs)
+                )
             finally:
-                # Ensure the loop is closed
                 loop.close()
+            # --- End Update ---
         else:
+            # --- Modified Sync Path ---
             for prompt in prompts:
-                completion = self.process_prompt(prompt, pre_prompt, **kwargs)
-                completions.append(completion)
+                # process_prompt now returns (messages, completion)
+                messages, completion = self.process_prompt(prompt, pre_prompt, **kwargs)
+                messages_list.append(messages)
+                completions_list.append(completion)
+            # --- End Update ---
 
-        return (kwargs.get("model"), completions, "",)
+        # --- Update return tuple to include messages_list ---
+        # Ensure the order matches RETURN_TYPES and RETURN_NAMES
+        return (kwargs.get("model"), completions_list, messages_list, usage_str,)
+        # --- End Update ---
 
 
 @litellm_base
