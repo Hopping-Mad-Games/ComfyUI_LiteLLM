@@ -1221,10 +1221,14 @@ class LiteLLMCompletionPrePend(LiteLLMCompletion):
 
 
 @litellm_base
+@litellm_base
 class LiteLLMCompletionListOfPrompts:
-    """Calls LiteLLMCompletion for each prompt in the list, optionally using corresponding
-       message history, asynchronously or synchronously.
-       Returns completions and resulting messages."""
+    """Calls LiteLLMCompletion for each item.
+       If 'prompts' list is provided, it iterates through prompts, using corresponding
+       message history (optional) and prepending pre_prompt to each prompt.
+       If 'prompts' is empty/None, it iterates through the 'messages' list,
+       using pre_prompt as the new user message content for each history.
+       Returns completions and resulting messages lists."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -1248,24 +1252,24 @@ class LiteLLMCompletionListOfPrompts:
     RETURN_TYPES = ("LITELLM_MODEL", "LIST", "LIST", "STRING",)
     RETURN_NAMES = ("Model", "Completions", "Messages", "Usage",)
 
-    # --- Helper function ---
+    # Helper function remains the same
     def wrapped_llm_call(self, index, **kwargs):
         return (index, LiteLLMCompletion().handler(**kwargs))
 
-    # --- Async prompt processing ---
+    # Core async processing function remains the same
     async def async_process_prompt(self, index, prompt, pre_prompt, message_history, **kwargs):
         import asyncio
         import functools
         combined_prompt = f"{pre_prompt}\n{prompt}" if pre_prompt else prompt
-        kwargs["messages"] = message_history # Pass the specific history for this item
-        kwargs["prompt"] = combined_prompt   # Pass the combined prompt string
+        kwargs["messages"] = message_history
+        kwargs["prompt"] = combined_prompt
         loop = asyncio.get_running_loop()
         partial_func = functools.partial(self.wrapped_llm_call, index, **kwargs)
         idx, the_rest = await loop.run_in_executor(None, partial_func)
         model, resulting_messages, completion, usage = the_rest
         return idx, resulting_messages, completion
 
-    # --- Sync prompt processing ---
+    # Core sync processing function remains the same
     def process_prompt(self, prompt, pre_prompt, message_history, **kwargs):
         combined_prompt = f"{pre_prompt}\n{prompt}" if pre_prompt else prompt
         kwargs["messages"] = message_history
@@ -1273,69 +1277,141 @@ class LiteLLMCompletionListOfPrompts:
         model, resulting_messages, completion, usage = LiteLLMCompletion().handler(**kwargs)
         return resulting_messages, completion
 
-    # --- Async aggregation ---
-    async def process_prompts(self, prompts, pre_prompt, messages_input_list, **kwargs):
+    # Modified async aggregation to handle the two modes
+    async def process_prompts(self, prompts, pre_prompt, messages_input_list, use_pre_prompt_as_prompt=False, **kwargs):
         import asyncio
+
         # Clean kwargs before passing down
         kwargs.pop("pre_prompt", None)
         kwargs.pop("prompts", None)
         kwargs.pop("messages", None)
         kwargs.pop("async", None)
 
-        tasks = [
-            self.async_process_prompt(i, prompt, pre_prompt, messages_input_list[i], **kwargs)
-            for i, prompt in enumerate(prompts)
-        ]
-        results = await asyncio.gather(*tasks)
+        tasks = []
+        if use_pre_prompt_as_prompt:
+            # Mode 2: Iterate through messages, use pre_prompt as the new prompt content
+            print("Info: No prompts provided, iterating through message histories using pre_prompt.")
+            for i, message_history in enumerate(messages_input_list):
+                 tasks.append(
+                     self.async_process_prompt(
+                         i,
+                         prompt=pre_prompt,  # Use pre_prompt as the main content
+                         pre_prompt="",      # No additional pre_prompt needed here
+                         message_history=message_history,
+                         **kwargs
+                     )
+                 )
+        else:
+            # Mode 1: Original logic - iterate through prompts
+             print(f"Info: Processing {len(prompts)} prompts.")
+             for i, prompt in enumerate(prompts):
+                 tasks.append(
+                     self.async_process_prompt(
+                         i,
+                         prompt=prompt,
+                         pre_prompt=pre_prompt,
+                         message_history=messages_input_list[i], # Assumes validation happened in handler
+                         **kwargs
+                     )
+                 )
+
+        if not tasks: return [], [] # Return empty if no tasks generated
+
+        results = await asyncio.gather(*tasks) # List of (idx, resulting_messages, completion)
         sorted_results = sorted(results, key=lambda x: x[0])
+
         completions_list = [completion for idx, messages, completion in sorted_results]
         messages_list = [messages for idx, messages, completion in sorted_results]
         return completions_list, messages_list
 
-    # --- Main handler ---
+
     def handler(self, **kwargs):
         import asyncio
         import sys
 
-        prompts = kwargs.pop("prompts", [])
+        prompts = kwargs.pop("prompts", None) # Pop prompts, default None
         pre_prompt = kwargs.pop("pre_prompt", "")
-        messages_input_list = kwargs.pop("messages", None) # Retrieve optional input
+        messages_input_list = kwargs.pop("messages", None) # Pop optional messages
         run_async = kwargs.pop("async", True)
 
         completions_list = []
         messages_output_list = []
         usage_str = ""
-        model_param = kwargs.get("model") # Get model for return
+        model_param = kwargs.get("model")
 
-        # --- Validate/Prepare messages_input_list (Handles None case) ---
-        if not prompts:
-             messages_input_list = []
-        elif messages_input_list is None or len(messages_input_list) != len(prompts):
-            # This print statement handles the 'optional' case implicitly if messages_input_list is None
-            print(f"Warning: Input 'messages' list is None or length ({len(messages_input_list) if messages_input_list else 'None'}) "
-                  f"mismatches 'prompts' length ({len(prompts)}). Using empty history for all prompts.", file=sys.stderr)
-            messages_input_list = [[] for _ in range(len(prompts))]
-        messages_input_list = [hist if isinstance(hist, list) else [] for hist in messages_input_list]
-        # --- End Validation ---
+        # --- Determine Mode and Validate Inputs ---
+        process_using_prompts = bool(prompts and isinstance(prompts, list) and len(prompts) > 0)
+        process_using_messages = bool(messages_input_list and isinstance(messages_input_list, list) and len(messages_input_list) > 0)
+
+        iterator_list = [] # The list we will actually loop over
+        mode_kwargs = {}   # kwargs specific to the mode for process_prompts
+        message_histories_to_use = []
+
+        if process_using_prompts:
+            iterator_list = prompts
+            mode_kwargs['use_pre_prompt_as_prompt'] = False
+            # Validate messages length against prompts length or default
+            if not process_using_messages or len(messages_input_list) != len(prompts):
+                 print(f"Warning: Input 'messages' list is None or length mismatch with 'prompts'. Using empty history for prompts.", file=sys.stderr)
+                 message_histories_to_use = [[] for _ in prompts]
+            else:
+                 message_histories_to_use = [hist if isinstance(hist, list) else [] for hist in messages_input_list]
+
+        elif process_using_messages: # No valid prompts, but valid messages list
+            iterator_list = messages_input_list # We iterate based on message histories
+            mode_kwargs['use_pre_prompt_as_prompt'] = True
+            message_histories_to_use = [hist if isinstance(hist, list) else [] for hist in messages_input_list] # Validate inner lists
+            if not pre_prompt:
+                 print("Warning: No prompts provided, iterating message histories, but 'pre_prompt' is empty. LLM calls might lack new input.", file=sys.stderr)
+
+        else: # Neither prompts nor messages are valid lists
+            print("Error: No valid 'prompts' list or 'messages' list provided. Nothing to process.", file=sys.stderr)
+            return (model_param, [], [], usage_str,) # Return empty results
+
+        # --- End Mode Determination ---
+
 
         if run_async:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
+                # Pass necessary lists and the mode flag
                 completions_list, messages_output_list = loop.run_until_complete(
-                    self.process_prompts(prompts, pre_prompt, messages_input_list, **kwargs)
+                    self.process_prompts(
+                        prompts if process_using_prompts else [], # Pass original prompts if relevant
+                        pre_prompt,
+                        message_histories_to_use, # Pass the validated/defaulted list
+                        **mode_kwargs, # Contains use_pre_prompt_as_prompt flag
+                        **kwargs      # Pass remaining LLM params
+                    )
                 )
             finally:
                 loop.close()
         else:
             # Sync Path
-            for i, prompt in enumerate(prompts):
-                 message_history = messages_input_list[i]
-                 resulting_messages, completion = self.process_prompt(
-                     prompt, pre_prompt, message_history, **kwargs
-                 )
-                 messages_output_list.append(resulting_messages)
-                 completions_list.append(completion)
+            if process_using_prompts:
+                 # Iterate through prompts
+                 for i, prompt in enumerate(iterator_list):
+                     message_history = message_histories_to_use[i]
+                     resulting_messages, completion = self.process_prompt(
+                         prompt=prompt,
+                         pre_prompt=pre_prompt,
+                         message_history=message_history,
+                         **kwargs
+                     )
+                     messages_output_list.append(resulting_messages)
+                     completions_list.append(completion)
+            elif process_using_messages:
+                 # Iterate through message histories, use pre_prompt as prompt content
+                 for i, message_history in enumerate(iterator_list):
+                     resulting_messages, completion = self.process_prompt(
+                         prompt=pre_prompt, # Use pre_prompt as the new content
+                         pre_prompt="",     # No secondary pre_prompt needed
+                         message_history=message_history,
+                         **kwargs
+                     )
+                     messages_output_list.append(resulting_messages)
+                     completions_list.append(completion)
 
         return (model_param, completions_list, messages_output_list, usage_str,)
 
