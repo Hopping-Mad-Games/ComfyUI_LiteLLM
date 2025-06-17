@@ -1,5 +1,5 @@
 import unittest
-from litellmnodes import LiteLLMCompletion
+from ..litellmnodes import LiteLLMCompletion
 
 
 
@@ -9,15 +9,16 @@ class TestLiteLLMCompletion(unittest.TestCase):
 
     def test_handler(self):
         kwargs = {
-            'model': 'anthropic/claude-3-haiku-20240307',
-            'messages': [{"content": "are you working, respond 0 for no or 1 for yes.", "role": "user"}],
-            'max_tokens': 2,
+            'model': 'openai/google/gemma-3-27b-it',
+            #'messages': [{"content": "are you working, respond 0 for no or 1 for yes.", "role": "user"}],
+            'prompt': "are you working, respond 0 for no or 1 for yes.",
+            'max_tokens': 1,
             'temperature': 0.5,
             'top_p': 0.5,
             'frequency_penalty': 0.5,
             'presence_penalty': 0.5
         }
-        completion, messages = self.litellm_completion.handler(**kwargs)
+        completion, messages,_,_, = self.litellm_completion.handler(**kwargs)
         self.assertIsInstance(completion, str)
         self.assertIsInstance(messages, list)
 

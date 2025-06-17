@@ -1,10 +1,4 @@
-import base64
-import hashlib
-import os
-import json
-import time
-import litellm
-from copy import deepcopy
+
 
 try:
     from . import config, CustomDict
@@ -61,13 +55,9 @@ class HTMLRenderer:
         return ret
 
 
-import base64
+
 import io
-
 import numpy as np
-import torch
-from PIL import Image
-
 
 @litellm_base
 class HTMLRendererScreenshot:
@@ -246,7 +236,12 @@ class LiteLLMModelProviderAdv:
     def get_openai_models(cls):
         import os
         from openai import OpenAI
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        # Use configured OPENAI_BASE_URL from config settings
+        base_url = config.config_settings.get("OPENAI_BASE_URL")
+        client = OpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            base_url=base_url
+        )
         try:
             response = client.models.list()
             # Only include models whose IDs contain one of these substrings.
@@ -637,7 +632,16 @@ import hashlib
 import time
 import base64
 from copy import deepcopy
+
 import litellm
+api_base = config.config_settings.get("OPENAI_BASE_URL", "https://api.litellm.com/v1")
+key = config.config_settings.get("BASE_API_KEY", None)
+if api_base:
+    litellm.api_base = api_base
+if key:
+    litellm.api_key = key
+litellm.set_verbose=True
+
 import torch
 from PIL import Image
 from io import BytesIO
@@ -793,13 +797,31 @@ class LitellmCompletionV2:
                 while not response:
                     try:
                         if id:
-                            response = self.litellm_completion_v2_inner(frequency_penalty, max_tokens, messages, model,
-                                                                        presence_penalty,
-                                                                        prompt, task, temperature, top_p, id)
+                            if id is not None:
+                                response = self.litellm_completion_v2_inner(
+                                    frequency_penalty = frequency_penalty,
+                                    max_tokens = max_tokens,
+                                    messages = messages,
+                                    model = model,
+                                    presence_penalty = presence_penalty,
+                                    prompt=prompt,
+                                    task=task,
+                                    temperature=temperature,
+                                    top_p=top_p,
+                                    image_data=id
+                                    )
                         else:
-                            response = self.litellm_completion_v2_inner(frequency_penalty, max_tokens, messages, model,
-                                                                        presence_penalty,
-                                                                        prompt, task, temperature, top_p)
+                                response = self.litellm_completion_v2_inner(
+                                    frequency_penalty,
+                                    max_tokens,
+                                    messages,
+                                    model,
+                                     presence_penalty,
+                                    prompt,
+                                    task,
+                                    temperature,
+                                    top_p
+                                )
 
                         response_choices = response.choices
                         response_first_choice = response_choices[0]
@@ -1575,7 +1597,7 @@ class LiteLLMCompletionProvider:
 
     # Method to provide the default LiteLLM model
     def handler(self, **kwargs):
-        import litellm
+
         from copy import deepcopy
 
         litellm.drop_params = True
@@ -1715,7 +1737,7 @@ class LiteLLMImageCaptioningProvider:
 
         # Define the callable function for captioning
         def captioning_function(new_prompt=None, new_image=None):
-            import litellm
+
             litellm.set_verbose = False
             litellm.suppress_debug_info = True
 
