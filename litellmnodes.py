@@ -1,11 +1,11 @@
 
 
 try:
-    from . import config, CustomDict
-    # CustomDict = CustomDict.CustomDict
+    from . import config
+    from .utils.custom_dict import CustomDict
 except ImportError:
     import config
-    import CustomDict
+    from utils.custom_dict import CustomDict
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -87,7 +87,7 @@ class HTMLRendererScreenshot:
             profile: true,
             useCORS: true
             }).then(function(canvas) {
-            document.getElementById('screen').appendChild(canvas);     
+            document.getElementById('screen').appendChild(canvas);
         }); }000);"""
 
         # 1) Create the iframe code from the user's HTML
@@ -333,6 +333,63 @@ class LiteLLMModelProvider:
 
 
 @litellm_base
+class LiteLLMCustomEndpointProvider:
+    """
+    Custom Endpoint Provider for LiteLLM
+
+    Allows configuration of custom API endpoints, API keys, and models
+    for platforms like Kluster.ai, local servers, or other OpenAI-compatible APIs.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model_name": ("STRING", {"default": "mistralai/Mistral-Nemo-Instruct-2407"}),
+                "api_base": ("STRING", {"default": "https://api.kluster.ai/v1"}),
+                "api_key": ("STRING", {"default": "your-api-key-here"}),
+                "provider": (["openai", "anthropic", "cohere", "custom"], {"default": "openai"}),
+            },
+            "optional": {
+                "api_version": ("STRING", {"default": ""}),
+                "organization": ("STRING", {"default": ""}),
+                "timeout": ("INT", {"default": 60, "min": 1, "max": 300}),
+                "max_retries": ("INT", {"default": 3, "min": 0, "max": 10}),
+            }
+        }
+
+    RETURN_TYPES = ("LITELLM_MODEL",)
+    RETURN_NAMES = ("model",)
+    FUNCTION = "handler"
+    CATEGORY = "ETK/LLM"
+
+    def handler(self, model_name, api_base, api_key, provider, **kwargs):
+        # Create model configuration with custom endpoint
+        model_config = {
+            "model": f"{provider}/{model_name}",
+            "kwargs": {
+                "api_key": api_key,
+                "api_base": api_base,
+                "timeout": kwargs.get("timeout", 60),
+                "max_retries": kwargs.get("max_retries", 3),
+            }
+        }
+
+        # Add optional parameters if provided
+        if kwargs.get("api_version"):
+            model_config["kwargs"]["api_version"] = kwargs["api_version"]
+        if kwargs.get("organization"):
+            model_config["kwargs"]["organization"] = kwargs["organization"]
+
+        return (model_config,)
+
+
+# Fix the display name after the decorator has processed it
+LiteLLMCustomEndpointProvider.DISPLAY_NAME = "Custom Endpoint Provider"
+NODE_DISPLAY_NAME_MAPPINGS[LiteLLMCustomEndpointProvider.DISPLAY_NAME] = "Custom Endpoint Provider"
+
+
+@litellm_base
 class AddDataModelToLLLm:
     @classmethod
     def INPUT_TYPES(cls):
@@ -532,7 +589,6 @@ class LiteLLMCompletion:
         kwargs["messages"] = messages
 
         import hashlib
-        # from . import CustomDict
         kwargs.pop('use_cached_response', None)
         uid_kwargs = CustomDict()
         uid_kwargs.update(kwargs.copy())
@@ -634,7 +690,7 @@ import base64
 from copy import deepcopy
 
 import litellm
-api_base = config.config_settings.get("OPENAI_BASE_URL", "https://api.litellm.com/v1")
+api_base = config.config_settings.get("OPENAI_BASE_URL", "https://api.openai.com/v1/")
 key = config.config_settings.get("BASE_API_KEY", None)
 if api_base:
     litellm.api_base = api_base
@@ -794,6 +850,8 @@ class LitellmCompletionV2:
             responses = []
             for id in base64_images:
                 response = None
+                response_content = ""
+                response_first_choice_message = None
                 while not response:
                     try:
                         if id:
@@ -823,16 +881,22 @@ class LitellmCompletionV2:
                                     top_p
                                 )
 
-                        response_choices = response.choices
-                        response_first_choice = response_choices[0]
-                        response_first_choice_message = response_first_choice.message
-                        response_content = response_first_choice_message.content or ""
-                        responses.append(response_content)
+                        if response:
+                            response_choices = response.choices
+                            response_first_choice = response_choices[0]
+                            response_first_choice_message = response_first_choice.message
+                            response_content = response_first_choice_message.content or ""
+                            responses.append(response_content)
                     except litellm.BadRequestError as e:
                         print(f"Bad request error: {e}")
+                        response_content = f"Error: {e}"
+                        responses.append(response_content)
                         break
                     except Exception as e:
                         print(f"An error occurred: {e}")
+                        response_content = f"Error: {e}"
+                        responses.append(response_content)
+                        break
 
         if not os.path.exists(config.config_settings['tmp_dir']):
             os.makedirs(config.config_settings['tmp_dir'])
@@ -843,7 +907,7 @@ class LitellmCompletionV2:
             json.dump(responses, file, indent=4)
 
         usage = ""
-        if single_response:
+        if single_response and response_first_choice_message:
             messages.append({"content": response_content, "role": response_first_choice_message.role})
 
             try:
@@ -959,16 +1023,18 @@ class LitellmCompletionV2:
 
                 if isinstance(model, dict):
                     if "kwargs" in model:
+                        # Extract and update with custom kwargs (api_key, api_base, etc.)
                         use_kwargs.update(model["kwargs"])
+
+                        # Always fix model string when we have a dict with kwargs
+                        use_kwargs["model"] = model["model"]
+
                         if "response_format" in use_kwargs:
                             base_scm_use = deepcopy(base_schema)
                             if hasattr(use_kwargs["response_format"], "schema"):
                                 scm = use_kwargs["response_format"].schema()
                                 base_scm_use["response_format"]["json_schema"]["schema"].update(scm)
                                 use_kwargs["response_format"] = json.dumps(base_scm_use["response_format"])
-
-                            # fix model string
-                            use_kwargs["model"] = use_kwargs["model"]["model"]
 
                             if isinstance(use_kwargs["response_format"], str):
                                 ob = json.loads(use_kwargs["response_format"])
@@ -1629,6 +1695,13 @@ class LiteLLMCompletionProvider:
                 "frequency_penalty": frequency_penalty,
                 "presence_penalty": presence_penalty,
             }
+
+            # Handle custom endpoint model configurations
+            if isinstance(model, dict) and "kwargs" in model:
+                # Extract and update with custom kwargs (api_key, api_base, etc.)
+                use_kwargs.update(model["kwargs"])
+                # Fix model string when we have a dict with kwargs
+                use_kwargs["model"] = model["model"]
 
             if ("o1" in use_kwargs["model"]) or ("o3" in use_kwargs["model"]):
                 use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")

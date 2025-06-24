@@ -1,12 +1,33 @@
 # lightrag_nodes.py
-from lightrag.llm import gpt_4o_mini_complete
+try:
+    from lightrag.llm import gpt_4o_mini_complete, gpt_4o_complete
+    from lightrag import LightRAG
+    from lightrag import QueryParam
+    LIGHTRAG_AVAILABLE = True
+except ImportError:
+    # LightRAG not available - create dummy functions for testing
+    def gpt_4o_mini_complete(*args, **kwargs):
+        return "LightRAG not available"
+
+    def gpt_4o_complete(*args, **kwargs):
+        return "LightRAG not available"
+
+    class LightRAG:
+        def __init__(self, *args, **kwargs):
+            pass
+        def insert(self, *args, **kwargs):
+            pass
+        def query(self, *args, **kwargs):
+            return "LightRAG not available"
+
+    class QueryParam:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    LIGHTRAG_AVAILABLE = False
 
 from .lightrag_base import LightRAGBaseNode
 import os
-
-from lightrag import LightRAG
-
-from lightrag.llm import gpt_4o_mini_complete, gpt_4o_complete
 
 
 class LinuxMemoryDirectoryNode(LightRAGBaseNode):
@@ -222,7 +243,7 @@ class DocumentProcessorNode(LightRAGBaseNode):
 #         return (response,)
 #
 #
-from lightrag import QueryParam
+# QueryParam imported above with conditional import
 
 
 class QueryNode(LightRAGBaseNode):

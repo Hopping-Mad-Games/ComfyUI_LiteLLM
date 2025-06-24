@@ -1,1 +1,33 @@
 *.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Configuration files with secrets
+config.local.yaml
+config.*.yaml
+!config.yaml
+
+# Test data and logs
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

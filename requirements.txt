@@ -6,8 +6,15 @@ boto3
 sentence-transformers
 rank_bm25
 
-# lightrag-hku
-git+https://github.com/TashaSkyUp/LightRAG.git@patch-1
+# lightrag-hku - install without heavy dependencies
+git+https://github.com/TashaSkyUp/LightRAG.git@patch-1 --no-deps
+# manually install only the essential lightrag dependencies
+networkx
+tenacity
+aiohttp
+tiktoken
+openai
+xxhash
 
 aioboto3
 ollama

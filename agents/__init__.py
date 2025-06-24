@@ -15,9 +15,9 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "Agent Node": "AgentNode",
-    "Basic Recursion Filter Node": "BasicRecursionFilterNode",
-    "Document Chunk Recursion Filter Node": "DocumentChunkRecursionFilterNode",
+    "Iterative Completion Agent": "AgentNode",
+    "Completion Enhancement Filter": "BasicRecursionFilterNode",
+    "Document Chunk Processor": "DocumentChunkRecursionFilterNode",
 
 }
 

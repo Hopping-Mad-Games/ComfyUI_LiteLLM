@@ -17,11 +17,14 @@ WEB_DIRECTORY = "js"
 
 from . import litellmnodes
 
-from .lightrag import NODE_CLASS_MAPPINGS as LR_NCM
-from .lightrag import NODE_DISPLAY_NAME_MAPPINGS as LR_NDNM
-
-NODE_CLASS_MAPPINGS.update(LR_NCM)
-NODE_DISPLAY_NAME_MAPPINGS.update(LR_NDNM)
+try:
+    from .lightrag import NODE_CLASS_MAPPINGS as LR_NCM
+    from .lightrag import NODE_DISPLAY_NAME_MAPPINGS as LR_NDNM
+    NODE_CLASS_MAPPINGS.update(LR_NCM)
+    NODE_DISPLAY_NAME_MAPPINGS.update(LR_NDNM)
+except ImportError:
+    # LightRAG not available - skip these nodes
+    pass
 
 from .agents import NODE_CLASS_MAPPINGS as AG_NCM
 from .agents import NODE_DISPLAY_NAME_MAPPINGS as AG_NDNM

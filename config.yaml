@@ -1,6 +1,17 @@
+# ComfyUI_LiteLLM Configuration
+# This file contains default settings. For API keys and sensitive data,
+# use environment variables or create a .env file (see .env.example)
+
 tmp_dir: comfy_path//data
-API_KEY1: replace_this_with_your_key_if_you_want_to_be_rather_insecure
-API_KEY2: replace_this_with_your_key_if_you_want_to_be_rather_insecure
-API_KEY3: replace_this_with_your_key_if_you_want_to_be_rather_insecure
-API_KEY4: replace_this_with_your_key_if_you_want_to_be_rather_insecure
-API_KEY5: replace_this_with_your_key_if_you_want_to_be_rather_insecure
+
+# API Configuration - Use environment variables for actual keys
+# Example: Set OPENAI_API_KEY, KLUSTER_API_KEY, etc. in your environment
+BASE_API_KEY: ${BASE_API_KEY}
+OPENAI_API_KEY: ${OPENAI_API_KEY}
+ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+COHERE_API_KEY: ${COHERE_API_KEY}
+KLUSTER_API_KEY: ${KLUSTER_API_KEY}
+
+# Base URLs for different providers
+OPENAI_BASE_URL: https://api.openai.com/v1/
+KLUSTER_BASE_URL: https://api.kluster.ai/v1

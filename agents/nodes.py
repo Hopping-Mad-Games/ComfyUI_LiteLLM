@@ -57,11 +57,28 @@ chunk:
 
 your previous completion:
 {completion}
- 
-just repeat the chunk and say that it needs to be processed. 
+
+just repeat the chunk and say that it needs to be processed.
 """
 
 class AgentNode(AgentBaseNode):
+    """
+    Iterative Completion Node with Memory and Recursion Support
+
+    This node performs iterative LLM completions with optional memory integration
+    and recursion filtering. It processes multiple prompts across iterations,
+    maintaining conversation state and applying custom processing filters.
+
+    Features:
+    - Multi-iteration processing with configurable max iterations
+    - Memory provider integration for RAG-like functionality
+    - Recursion filters for post-processing completions
+    - Caching system for response persistence
+    - Support for multiple prompts in a single run
+
+    Note: Despite the name "AgentNode", this is primarily an iterative completion
+    processor. Consider renaming to "IterativeCompletionNode" for clarity.
+    """
     __package__ = globals().get("__package__")
     __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
 
@@ -216,10 +233,18 @@ class AgentNode(AgentBaseNode):
         return base_inputs
 
     async def process_iteration(self, kwargs, memory_provider, recursion_filter, ret):
-        # ret is a tuple of the form (ret, kwargs) which is the return value of the base_handler
-        # and should be renamed to avoid confusion
-        # lets rename it to something that is more descriptive
-        # that doesnt say "ret" like "base_handler_return"
+        """
+        Process a single iteration of the agent workflow.
+
+        Args:
+            kwargs: Arguments for the base handler including prompt and messages
+            memory_provider: Optional function to provide memory/context
+            recursion_filter: Optional function to post-process completions
+            ret: Previous iteration result tuple (model, messages, completion, ...)
+
+        Returns:
+            Tuple of (updated_result, updated_kwargs)
+        """
 
         import asyncio
 
@@ -252,9 +277,35 @@ class AgentNode(AgentBaseNode):
         return ret, kwargs
 
     def handler(self, **kwargs):
+        """
+        Main handler for iterative completion processing.
+
+        This method orchestrates the entire agent workflow:
+        1. Checks for cached responses if use_last_response is True
+        2. Processes multiple prompts across multiple iterations
+        3. Applies memory and recursion filters at each step
+        4. Caches the final results
+
+        Args:
+            **kwargs: All input parameters including prompts, model config, etc.
+
+        Returns:
+            Tuple of (model, messages, completion, completion_list, messages_results, usage)
+        """
         import asyncio
         # from ..utils import get_input_hash
         from copy import deepcopy
+
+        # Input validation
+        if not kwargs.get("model"):
+            raise ValueError("Model is required. Please connect a LiteLLMModelProvider node.")
+
+        max_iterations = kwargs.get("max_iterations", 1)
+        if max_iterations < 1:
+            raise ValueError("max_iterations must be at least 1")
+
+        if max_iterations > 10:
+            print(f"Warning: max_iterations is set to {max_iterations}. This may result in high API costs.")
 
         # Initial setup and cache check
         input_hash = get_input_hash(**kwargs)
@@ -271,12 +322,19 @@ class AgentNode(AgentBaseNode):
                         cached_response["messages_results"],
                         cached_response.get("usage", "Usage"))
 
-        # Prompt preparation
+        # Prompt preparation and validation
         if kwargs.get("List_prompts", None):
             prompts = kwargs.pop("List_prompts", None)
-            if not isinstance(prompts[0], str):
-                raise ValueError("List_prompts should be a list of strings")
+            if not prompts:
+                raise ValueError("List_prompts cannot be empty")
+            if not isinstance(prompts, list):
+                raise ValueError("List_prompts must be a list")
+            if not all(isinstance(p, str) for p in prompts):
+                raise ValueError("All items in List_prompts must be strings")
         else:
+            prompt = kwargs.get("prompt")
+            if not prompt:
+                raise ValueError("Either 'prompt' or 'List_prompts' must be provided")
             prompts = [kwargs.pop("prompt", None)]
 
         recursion_filter = kwargs.pop("recursion_filter", None)
@@ -360,6 +418,23 @@ class AgentNode(AgentBaseNode):
 
 
 class BasicRecursionFilterNode(AgentBaseNode):
+    """
+    Iterative Completion Enhancement Filter
+
+    This node creates a recursion filter that enhances completions through
+    multiple rounds of processing. It takes an initial completion and iteratively
+    improves it using a customizable prompt template.
+
+    The filter is designed to:
+    - Expand on initial completions with deeper analysis
+    - Consider user intent and context more thoroughly
+    - Apply multiple rounds of enhancement up to max_depth
+
+    Usage: Connect the output to AgentNode's recursion_filter input to enable
+    iterative completion enhancement during agent processing.
+
+    Note: Consider renaming to "CompletionEnhancementFilterNode" for clarity.
+    """
     __package__ = globals().get("__package__")
     __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
 
@@ -388,31 +463,84 @@ class BasicRecursionFilterNode(AgentBaseNode):
                 recursion_prompt: str = default_expansion_prompt,
                 inner_recursion_filter: callable = None
                 ):
+        """
+        Create a recursion filter for iterative completion enhancement.
+
+        Args:
+            max_depth: Number of enhancement iterations to perform
+            LLLM_provider: Function that takes a prompt and returns a completion
+            recursion_prompt: Template for enhancement prompts (uses {prompt}, {completion}, {date})
+            inner_recursion_filter: Optional nested filter to apply before each iteration
+
+        Returns:
+            Tuple containing the recursion filter function
+        """
         def recursion_filter(prompt: str, completion: str) -> str:
             from datetime import datetime
 
-            current_completion = completion
-            for _ in range(max_depth):
-                current_completion = inner_recursion_filter(
-                    prompt,
-                    current_completion
-                ) if inner_recursion_filter else current_completion
+            # Input validation
+            if not prompt:
+                raise ValueError("Prompt cannot be empty for recursion filter")
 
-                formatted_prompt = (
-                    recursion_prompt
-                    .replace("{prompt}", prompt)
-                    .replace("{completion}", current_completion or "")
-                    .replace("{date}", datetime.now().strftime("%Y-%m-%d"))
-                )
+            if not LLLM_provider:
+                raise ValueError("LLLM_provider is required but not provided")
 
-                current_completion = LLLM_provider(formatted_prompt)
+            current_completion = completion or ""
 
-            return current_completion
+            try:
+                for depth in range(max_depth):
+                    if inner_recursion_filter:
+                        try:
+                            current_completion = inner_recursion_filter(
+                                prompt,
+                                current_completion
+                            )
+                        except Exception as e:
+                            print(f"Warning: Inner recursion filter failed at depth {depth}: {e}")
+                            # Continue with current completion
+
+                    formatted_prompt = (
+                        recursion_prompt
+                        .replace("{prompt}", prompt)
+                        .replace("{completion}", current_completion)
+                        .replace("{date}", datetime.now().strftime("%Y-%m-%d"))
+                    )
+
+                    try:
+                        current_completion = LLLM_provider(formatted_prompt)
+                    except Exception as e:
+                        print(f"Error in LLLM_provider at recursion depth {depth}: {e}")
+                        raise
+
+                return current_completion
+
+            except Exception as e:
+                # in comfyui we raise errors so the user knows whats going on
+                print(f"Error in recursion filter: {e}")
+                raise
 
         return (recursion_filter,)
 
 
 class DocumentChunkRecursionFilterNode(AgentBaseNode):
+    """
+    Document Chunk Processing Filter
+
+    This node creates a recursion filter that processes documents in chunks.
+    It's designed for handling large documents by breaking them into manageable
+    pieces and processing each chunk sequentially.
+
+    The filter:
+    - Chunks documents into specified sizes
+    - Processes one chunk per agent iteration
+    - Maintains state across chunk processing
+    - Can be combined with other recursion filters
+
+    Usage: Connect to AgentNode's recursion_filter input for document processing.
+    Set max_iterations on AgentNode to match expected number of chunks.
+
+    Note: Consider renaming to "DocumentChunkProcessorNode" for clarity.
+    """
     __package__ = globals().get("__package__")
     __package__ = __package__ or "custom_nodes.ComfyUI_LiteLLM.Agents"
 
@@ -439,13 +567,51 @@ class DocumentChunkRecursionFilterNode(AgentBaseNode):
     @classmethod
     def handler(cls, LLLM_provider: callable, document:str, chunk_size: int, recursion_prompt: str = default_expansion_prompt,
                 inner_recursion_filter: callable = None):
+        """
+        Create a document chunk processing filter.
+
+        Args:
+            LLLM_provider: Function that takes a prompt and returns a completion
+            document: Full document text to be processed in chunks
+            chunk_size: Size of each chunk in characters
+            recursion_prompt: Template for chunk processing prompts (uses {chunk}, {prompt}, {completion}, {date})
+            inner_recursion_filter: Optional nested filter to apply before chunk processing
+
+        Returns:
+            Tuple containing the document chunk recursion filter
+        """
+
+        # Input validation
+        if not LLLM_provider:
+            raise ValueError("LLLM_provider is required. Please connect a LiteLLMCompletionProvider node.")
+
+        if not document:
+            raise ValueError("Document text cannot be empty")
+
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be at least 1")
+
+        if chunk_size > 10000:
+            print(f"Warning: Large chunk_size ({chunk_size}) may exceed model token limits")
+
+        # Calculate expected number of chunks for user information
+        expected_chunks = (len(document) + chunk_size - 1) // chunk_size
+        print(f"Document will be processed in {expected_chunks} chunks. Set max_iterations to {expected_chunks} in AgentNode.")
 
         class document_chunk_recursion_filter:
+            """
+            Internal class that handles document chunk processing.
+
+            This class maintains state for chunk processing and provides
+            the actual filter function that gets called during agent iterations.
+            """
             def __init__(self):
                 self.document = document
                 self.chunked_document = self.chunk_document(self.document, chunk_size)
                 self.recursion_prompt = recursion_prompt
                 self.chunker = self.yield_chunk()
+                self.current_chunk_index = 0
+                self.total_chunks = len(self.chunked_document)
 
             def yield_chunk(self):
                 for chunk in self.chunked_document:
@@ -454,7 +620,7 @@ class DocumentChunkRecursionFilterNode(AgentBaseNode):
             def chunk_document(self, doc, size):
                 return [doc[i:i + size] for i in range(0, len(doc), size)]
 
-            def format_prompt(self, chunk, completion,prompt):
+            def format_prompt(self, chunk, completion, prompt):
                 from datetime import datetime
                 formatted_prompt = (
                     self.recursion_prompt
@@ -466,22 +632,44 @@ class DocumentChunkRecursionFilterNode(AgentBaseNode):
                 return formatted_prompt
 
             def __call__(self, prompt: str, messages: list) -> str:
-                current_completion = ""
-                chunk = next(self.chunker)
-                current_completion = inner_recursion_filter(
-                    prompt,
-                    messages
-                ) if inner_recursion_filter else current_completion
+                try:
+                    if self.current_chunk_index >= self.total_chunks:
+                        print("Warning: No more chunks to process. Consider reducing max_iterations.")
+                        return "No more document chunks to process."
 
-                formatted_prompt = self.format_prompt(
-                    chunk=chunk,
-                    completion = current_completion,
-                    prompt = prompt
-                )
+                    chunk = next(self.chunker)
+                    self.current_chunk_index += 1
 
-                current_completion = LLLM_provider(formatted_prompt)
+                    print(f"Processing chunk {self.current_chunk_index}/{self.total_chunks}")
 
-                return current_completion
+                    current_completion = ""
+
+                    if inner_recursion_filter:
+                        try:
+                            current_completion = inner_recursion_filter(prompt, messages)
+                        except Exception as e:
+                            print(f"Warning: Inner recursion filter failed: {e}")
+
+                    formatted_prompt = self.format_prompt(
+                        chunk=chunk,
+                        completion=current_completion,
+                        prompt=prompt
+                    )
+
+                    try:
+                        current_completion = LLLM_provider(formatted_prompt)
+                    except Exception as e:
+                        print(f"Error in LLLM_provider for chunk {self.current_chunk_index}: {e}")
+                        raise
+
+                    return current_completion
+
+                except StopIteration:
+                    print("All document chunks have been processed.")
+                    return "Document processing complete."
+                except Exception as e:
+                    print(f"Error in document chunk processing: {e}")
+                    return f"Error processing chunk: {str(e)}"
 
         recursion_filter = document_chunk_recursion_filter()
         return (recursion_filter,)
