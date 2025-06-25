@@ -1,4 +1,5 @@
 import yaml
+import os
 
 
 def read_yaml(file_path, config_replaclemts):
@@ -9,27 +10,53 @@ def read_yaml(file_path, config_replaclemts):
             for key2, value2 in config_replaclemts.items():
                 if key2 in value:
                     data[key] = value.replace(key2, value2)
-
     return data
 
 
-import os
+def get_api_key(key_name):
+    """Get API key from environment, checking both original and namespaced versions"""
+    # First check if the key exists in environment as-is
+    if key_name in os.environ:
+        return os.environ[key_name]
 
+    # Then check namespaced version
+    namespaced_key = f'COMFYUI_LITELLM_{key_name}'
+    if namespaced_key in os.environ:
+        return os.environ[namespaced_key]
+
+    # Return None if not found
+    return None
+
+
+def get_config_value(key):
+    """Get configuration value safely"""
+    return config_settings.get(key)
+
+
+# Initialize paths
 this_file_path = os.path.dirname(os.path.realpath(__file__))
-
 node_addon_dir = this_file_path
-
 comfy_path = os.path.dirname(os.path.dirname(this_file_path))  # path to the comfy folder
 
 config_replacements = {
     'comfy_path': comfy_path,
     'addon_path': node_addon_dir
 }
+
 config_file_path = os.path.join(this_file_path, "config.yaml")
+
 # Load the YAML data when the module is imported
 config_settings = read_yaml(config_file_path, config_replacements)
-# add the replacements directly to the config_settings
+
+# Add the replacements directly to the config_settings
 config_settings.update(config_replacements)
-# for every item in the config set an env variable to it
-for k,v in config_settings.items():
- os.environ[k]=v
+
+# Only set environment variables for internal paths to avoid conflicts
+# DO NOT set API key environment variables to avoid polluting global environment
+internal_config_keys = ['tmp_dir', 'comfy_path', 'addon_path']
+for k, v in config_settings.items():
+    if k in internal_config_keys:
+        # Use COMFYUI_LITELLM_ prefix to avoid conflicts with other packages
+        env_key = f'COMFYUI_LITELLM_{k.upper()}'
+        if env_key not in os.environ:  # Don't overwrite existing values
+            os.environ[env_key] = str(v)
