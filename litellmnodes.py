@@ -3,9 +3,11 @@
 try:
     from . import config
     from .utils.custom_dict import CustomDict
+    from .utils.env_config import get_env_var
 except ImportError:
     import config
     from utils.custom_dict import CustomDict
+    from utils.env_config import get_env_var
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
@@ -234,12 +236,25 @@ class LiteLLMModelProviderAdv:
     # Fetch all OpenAI models using the new client instance.
     @classmethod
     def get_openai_models(cls):
+        # Check if OpenAI API key is available and configured
+        api_key = get_env_var("OPENAI_API_KEY")
+        if not api_key or api_key.strip() == "" or api_key == "your-api-key-here":
+            # Return fallback list of common OpenAI models if no API key configured
+            return [
+                "openai/gpt-4o-mini",
+                "openai/gpt-4o",
+                "openai/gpt-4o-2024-08-06",
+                "openai/gpt-3.5-turbo",
+                "openai/o1-mini",
+                "openai/o1"
+            ]
+
         import os
         from openai import OpenAI
         # Use configured OPENAI_BASE_URL from config settings
         base_url = config.config_settings.get("OPENAI_BASE_URL")
         client = OpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
+            api_key=api_key,
             base_url=base_url
         )
         try:
@@ -250,9 +265,16 @@ class LiteLLMModelProviderAdv:
                 "openai/" + model.id for model in response.data
                 if any(sub in model.id for sub in valid_substrings)
             ]
-            return q
-        except Exception:
-            return ["error getting openai models."]
+            return q if q else ["openai/gpt-4o-mini"]  # Fallback if no models found
+        except Exception as e:
+            print(f"Warning: Could not fetch OpenAI models: {str(e)}")
+            # Return fallback list of common OpenAI models on error
+            return [
+                "openai/gpt-4o-mini",
+                "openai/gpt-4o",
+                "openai/gpt-4o-2024-08-06",
+                "openai/gpt-3.5-turbo"
+            ]
 
     # Hard-coded list of models from other providers.
     @classmethod
@@ -691,7 +713,7 @@ from copy import deepcopy
 
 import litellm
 api_base = config.config_settings.get("OPENAI_BASE_URL", "https://api.openai.com/v1/")
-key = config.config_settings.get("BASE_API_KEY", None)
+key = get_env_var("BASE_API_KEY")
 if api_base:
     litellm.api_base = api_base
 if key:

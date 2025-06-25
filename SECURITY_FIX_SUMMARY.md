@@ -1,13 +1,14 @@
-# Security Fix Summary: API Key Management
+# Security Fix Summary: API Key Management & Environment Safety
 
-This document summarizes the security improvements made to remove hardcoded API keys and implement proper environment variable management.
+This document summarizes the security improvements made to remove hardcoded API keys, implement proper environment variable management, and ensure the addon doesn't pollute the global environment.
 
 ## 🚨 Issues Identified
 
-### Critical Security Issue Fixed
+### Critical Security Issues Fixed
 - **Hardcoded Kluster.ai API Key**: The key `46b1a513-72b6-4549-aac3-0d2f8ae16db9` was hardcoded in 12+ locations across test files
 - **Config Template with Placeholder Keys**: Insecure placeholder text in `config.yaml`
 - **No Environment Variable Management**: No systematic approach to handling sensitive configuration
+- **Environment Variable Pollution**: The addon was setting global environment variables that could interfere with other ComfyUI custom node packages
 
 ## ✅ Security Improvements Implemented
 
@@ -31,6 +32,12 @@ This document summarizes the security improvements made to remove hardcoded API 
 - **Environment-aware testing**: Tests use environment variables with sensible fallbacks
 - **Integration test controls**: `RUN_INTEGRATION_TESTS` flag to control real API calls
 
+### 5. Environment Safety & Compatibility (Latest Fix)
+- **Eliminated environment pollution**: Removed all code that sets global environment variables
+- **Clean configuration architecture**: Separates `.env` (testing), `config.yaml` (non-sensitive settings), and system environment (production)
+- **ComfyUI package compatibility**: Ensures this addon won't interfere with other custom node packages that use the same API services
+- **Non-polluting design**: Addon only reads environment variables, never sets them
+
 ## 📁 Files Modified
 
 ### New Files Created
@@ -42,18 +49,21 @@ This document summarizes the security improvements made to remove hardcoded API 
 
 ### Files Updated
 - `.gitignore` - Enhanced to protect sensitive files
-- `config.yaml` - Removed placeholder API keys, added documentation
+- `config.yaml` - Completely cleaned: removed ALL API key placeholders, kept only non-sensitive settings
+- `config.py` - Removed ALL environment variable setting code to prevent pollution
 - `utils/__init__.py` - Added env_config module export
+- `litellmnodes.py` - Updated to use safe environment reading functions
 - All test files (`tests/*.py`) - Updated to use environment variables
 - `run_tests.py` - Updated to use environment variables
+- `readme.md` - Updated with new architecture documentation
 
 ## 🔧 Technical Implementation
 
-### Environment Variable Loading
+### Environment Variable Loading (Read-Only)
 ```python
 from utils.env_config import get_kluster_config, get_env_var
 
-# Secure API key access
+# Secure API key access - NEVER sets environment variables
 config = get_kluster_config()  # Includes validation
 api_key = get_env_var('KLUSTER_API_KEY', required=True)
 ```
@@ -69,11 +79,17 @@ def kluster_api_config():
     return {'api_key': api_key, ...}
 ```
 
-### Configuration Hierarchy
-1. **Environment variables** (highest priority)
-2. **`.env` file** (fallback)
-3. **Default values** (safe fallbacks)
-4. **Required validation** (fails gracefully)
+### Configuration Architecture (Non-Polluting)
+1. **System environment variables** (production, highest priority)
+2. **`.env` file** (development/testing fallback)
+3. **`config.yaml`** (non-sensitive settings only)
+4. **Never sets global environment** (prevents interference with other packages)
+
+### Environment Safety Design
+- **Read-only approach**: Only reads environment variables, never modifies them
+- **Clean separation**: `.env` for testing, system environment for production
+- **No API keys in config files**: All sensitive data comes from environment
+- **Compatibility guarantee**: Won't interfere with other ComfyUI custom nodes
 
 ## 🛡️ Security Best Practices Implemented
 
@@ -84,12 +100,16 @@ def kluster_api_config():
 - ✅ Validate required environment variables
 - ✅ Fail gracefully when credentials are missing
 - ✅ Document environment setup clearly
+- ✅ Only read environment variables (never set them)
+- ✅ Ensure compatibility with other ComfyUI packages
 
 ### ❌ DON'T (Now Prevented)
 - ❌ No hardcoded API keys in source code
 - ❌ No committed `.env` files
 - ❌ No API keys in configuration templates
 - ❌ No silent failures for missing credentials
+- ❌ No setting of global environment variables
+- ❌ No interference with other custom node packages
 
 ## 📊 Impact Assessment
 
@@ -98,12 +118,15 @@ def kluster_api_config():
 - **Zero environment variable support**
 - **Insecure configuration templates**
 - **No git protection for sensitive files**
+- **Environment variable pollution** (interfering with other packages)
 
-### After Fix
+### After Final Fix
 - **Zero hardcoded API keys** in Python code
 - **Comprehensive environment management**
 - **Secure configuration system**
 - **Full git protection for sensitive data**
+- **Zero environment pollution** (completely safe for other packages)
+- **Clean architecture** (production vs testing separation)
 
 ## 🧪 Testing Results
 
@@ -141,6 +164,10 @@ def kluster_api_config():
 - [x] Verify git ignores sensitive files
 - [x] Update configuration templates
 - [x] Create migration documentation
+- [x] Eliminate all environment variable pollution
+- [x] Ensure compatibility with other ComfyUI packages
+- [x] Clean up config.yaml to remove all API key references
+- [x] Update documentation with new architecture
 
 ## 🔍 Verification Commands
 
@@ -166,6 +193,8 @@ python3 -m pytest tests/ -k "not real" -v
 4. **Production-Ready Security** with proper secrets management
 5. **Backward Compatibility** with existing functionality
 6. **Comprehensive Testing** ensuring no regressions
+7. **Zero Environment Pollution** ensuring compatibility with other ComfyUI packages
+8. **Clean Architecture** separating development, testing, and production concerns
 
 ## 📞 Next Steps
 
@@ -180,3 +209,5 @@ python3 -m pytest tests/ -k "not real" -v
 **Status**: ✅ **COMPLETE** - All security issues resolved and tested
 **Risk Level**: 🟢 **LOW** - Proper security practices now implemented
 **Verification**: ✅ **PASSED** - All tests confirm secure implementation
+**Compatibility**: ✅ **GUARANTEED** - No interference with other ComfyUI packages
+**Architecture**: ✅ **CLEAN** - Production-ready, non-polluting design

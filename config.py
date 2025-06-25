@@ -51,12 +51,6 @@ config_settings = read_yaml(config_file_path, config_replacements)
 # Add the replacements directly to the config_settings
 config_settings.update(config_replacements)
 
-# Only set environment variables for internal paths to avoid conflicts
-# DO NOT set API key environment variables to avoid polluting global environment
-internal_config_keys = ['tmp_dir', 'comfy_path', 'addon_path']
-for k, v in config_settings.items():
-    if k in internal_config_keys:
-        # Use COMFYUI_LITELLM_ prefix to avoid conflicts with other packages
-        env_key = f'COMFYUI_LITELLM_{k.upper()}'
-        if env_key not in os.environ:  # Don't overwrite existing values
-            os.environ[env_key] = str(v)
+# DO NOT set any environment variables to avoid polluting global environment
+# Custom node packs should only read environment variables, never set them
+# Other packages and the system should manage their own environment variables

@@ -18,8 +18,8 @@ WEB_DIRECTORY = "js"
 from . import litellmnodes
 
 try:
-    from .lightrag import NODE_CLASS_MAPPINGS as LR_NCM
-    from .lightrag import NODE_DISPLAY_NAME_MAPPINGS as LR_NDNM
+    from .comfyui_lightrag import NODE_CLASS_MAPPINGS as LR_NCM
+    from .comfyui_lightrag import NODE_DISPLAY_NAME_MAPPINGS as LR_NDNM
     NODE_CLASS_MAPPINGS.update(LR_NCM)
     NODE_DISPLAY_NAME_MAPPINGS.update(LR_NDNM)
 except ImportError:

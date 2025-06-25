@@ -4,14 +4,10 @@
 
 tmp_dir: comfy_path//data
 
-# API Configuration - Use environment variables for actual keys
-# Example: Set OPENAI_API_KEY, KLUSTER_API_KEY, etc. in your environment
-BASE_API_KEY: ${BASE_API_KEY}
-OPENAI_API_KEY: ${OPENAI_API_KEY}
-ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-COHERE_API_KEY: ${COHERE_API_KEY}
-KLUSTER_API_KEY: ${KLUSTER_API_KEY}
-
 # Base URLs for different providers
+# API keys should be set as system environment variables, not in this config file
+# For testing, use the .env file
 OPENAI_BASE_URL: https://api.openai.com/v1/
 KLUSTER_BASE_URL: https://api.kluster.ai/v1
+# Internal configuration only - do not add API keys here
+# This prevents interference with other ComfyUI custom node packages
