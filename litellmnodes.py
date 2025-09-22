@@ -474,6 +474,7 @@ class LiteLLMModelProviderAdv:
             cls._ensure_fallback_metadata(combined)
             return sorted(combined)
 
+
         api_key = get_env_var("OPENAI_API_KEY")
         if not api_key or api_key.strip() == "" or api_key == "your-api-key-here":
             return _fallback_models()
@@ -481,11 +482,13 @@ class LiteLLMModelProviderAdv:
         from openai import OpenAI
 
         base_url = config.config_settings.get("OPENAI_BASE_URL")
+
         normalized_base = cls._normalize_openai_base_url(base_url)
         if normalized_base:
             client = OpenAI(api_key=api_key, base_url=normalized_base)
         else:
             client = OpenAI(api_key=api_key)
+
 
         collected_models = []
         seen = set()
@@ -508,6 +511,7 @@ class LiteLLMModelProviderAdv:
                     # stays focused on completion-style models.
                     if model_id.startswith("ft:"):
                         continue
+
 
                     # Prefer capability metadata when available to identify
                     # chat-capable models. Fall back to id heuristics for older
@@ -551,6 +555,7 @@ class LiteLLMModelProviderAdv:
                         requires_max_completion_tokens=requires_max_completion_tokens,
                     )
 
+
                     if display_id not in seen:
                         seen.add(display_id)
                         collected_models.append(display_id)
@@ -559,6 +564,7 @@ class LiteLLMModelProviderAdv:
                     break
 
                 last_id = getattr(response, "last_id", None)
+
                 if not last_id and data:
                     # Some deployments omit last_id; use the final model id so
                     # pagination continues and we do not miss newer models
