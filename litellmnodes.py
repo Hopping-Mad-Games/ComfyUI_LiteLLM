@@ -236,45 +236,74 @@ class LiteLLMModelProviderAdv:
     # Fetch all OpenAI models using the new client instance.
     @classmethod
     def get_openai_models(cls):
-        # Check if OpenAI API key is available and configured
+        """Fetch a live list of OpenAI models.
+
+        We call the Models API directly so that the list stays in sync with
+        whatever is currently available to the configured account.  Pagination
+        is handled to make sure we do not miss models when OpenAI adds more.
+        """
+
+        def _fallback_models():
+            # Use the pricing table as the primary source of truth for fallbacks
+            # so we surface any model that we have explicit pricing for.
+            return list(cls.OPENAI_MODEL_COSTS.keys()) or ["openai/gpt-4o-mini"]
+
         api_key = get_env_var("OPENAI_API_KEY")
         if not api_key or api_key.strip() == "" or api_key == "your-api-key-here":
-            # Return fallback list of common OpenAI models if no API key configured
-            return [
-                "openai/gpt-4o-mini",
-                "openai/gpt-4o",
-                "openai/gpt-4o-2024-08-06",
-                "openai/gpt-3.5-turbo",
-                "openai/o1-mini",
-                "openai/o1"
-            ]
+            return _fallback_models()
 
-        import os
         from openai import OpenAI
-        # Use configured OPENAI_BASE_URL from config settings
+
         base_url = config.config_settings.get("OPENAI_BASE_URL")
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+        client = OpenAI(api_key=api_key, base_url=base_url)
+
+        collected_models = []
+        seen = set()
+        params = {"limit": 100}
+
         try:
-            response = client.models.list()
-            # Only include models whose IDs contain one of these substrings.
-            valid_substrings = ["gpt-3.5", "gpt-4", "gpt-4o", "o1", "o3"]
-            q = [
-                "openai/" + model.id for model in response.data
-                if any(sub in model.id for sub in valid_substrings)
-            ]
-            return q if q else ["openai/gpt-4o-mini"]  # Fallback if no models found
+            while True:
+                response = client.models.list(**params)
+                data = getattr(response, "data", []) or []
+
+                for model in data:
+                    model_id = getattr(model, "id", None)
+                    if model_id is None and isinstance(model, dict):
+                        model_id = model.get("id")
+
+                    if not model_id:
+                        continue
+
+                    # Skip obvious non-chat models and fine-tunes so the list
+                    # stays focused on completion-style models.
+                    if model_id.startswith("ft:"):
+                        continue
+
+                    if not model_id.startswith(("gpt", "o1", "o3")):
+                        continue
+
+                    display_id = model_id if model_id.startswith("openai/") else f"openai/{model_id}"
+                    if display_id not in seen:
+                        seen.add(display_id)
+                        collected_models.append(display_id)
+
+                if not getattr(response, "has_more", False):
+                    break
+
+                last_id = getattr(response, "last_id", None)
+                if last_id:
+                    params["after"] = last_id
+                else:
+                    break
+
+            if not collected_models:
+                return _fallback_models()
+
+            collected_models.sort()
+            return collected_models
         except Exception as e:
             print(f"Warning: Could not fetch OpenAI models: {str(e)}")
-            # Return fallback list of common OpenAI models on error
-            return [
-                "openai/gpt-4o-mini",
-                "openai/gpt-4o",
-                "openai/gpt-4o-2024-08-06",
-                "openai/gpt-3.5-turbo"
-            ]
+            return _fallback_models()
 
     # Hard-coded list of models from other providers.
     @classmethod
