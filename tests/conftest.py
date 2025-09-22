@@ -10,8 +10,10 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock
 import pytest
 
-# Add project root to Python path
+# Add project root and test stubs to Python path
 project_root = Path(__file__).parent.parent
+stub_dir = Path(__file__).parent / "_stubs"
+sys.path.insert(0, str(stub_dir))
 sys.path.insert(0, str(project_root))
 
 def pytest_configure(config):
