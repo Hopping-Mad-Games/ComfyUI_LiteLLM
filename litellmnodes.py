@@ -198,7 +198,226 @@ class LiteLLMModelProviderAdv:
         "openai/gpt-3.5-turbo-16k": "Input: $3.00/1M, Output: $4.00/1M tokens",
         "openai/gpt-4": "Input: $30/1M, Output: $60/1M tokens (8K)",
         "openai/gpt-4-32k": "Input: $60/1M, Output: $120/1M tokens (32K)",
+        # GPT-5 family pricing (approximate / subject to change):
+        "openai/gpt-5": "Input: $10.00/1M, Cached: $5.00/1M, Output: $40.00/1M tokens",
+        "openai/gpt-5-preview": "Input: $10.00/1M, Cached: $5.00/1M, Output: $40.00/1M tokens",
+        "openai/gpt-5-mini": "Input: $1.00/1M, Cached: $0.50/1M, Output: $4.00/1M tokens",
+        "openai/gpt-5-mini-preview": "Input: $1.00/1M, Cached: $0.50/1M, Output: $4.00/1M tokens",
     }
+
+    # Default OpenAI models that should appear even when the API cannot be queried.
+    DEFAULT_OPENAI_MODELS = sorted(
+        {
+            "openai/gpt-3.5-turbo",
+            "openai/gpt-3.5-turbo-16k",
+            "openai/gpt-4",
+            "openai/gpt-4-32k",
+            "openai/gpt-4o",
+            "openai/gpt-4o-2024-08-06",
+            "openai/gpt-4o-audio-preview",
+            "openai/gpt-4o-audio-preview-2024-12-17",
+            "openai/gpt-4o-mini",
+            "openai/gpt-4o-mini-2024-07-18",
+            "openai/gpt-4o-mini-audio-preview",
+            "openai/gpt-4o-mini-audio-preview-2024-12-17",
+            "openai/gpt-4o-mini-realtime-preview",
+            "openai/gpt-4o-mini-realtime-preview-2024-12-17",
+            "openai/gpt-4o-realtime-preview",
+            "openai/gpt-4o-realtime-preview-2024-12-17",
+            "openai/gpt-5",
+            "openai/gpt-5-preview",
+            "openai/gpt-5-mini",
+            "openai/gpt-5-mini-preview",
+            "openai/o1",
+            "openai/o1-2024-12-17",
+            "openai/o1-mini",
+            "openai/o1-mini-2024-09-12",
+            "openai/o3-mini",
+            "openai/o3-mini-2025-01-31",
+        }
+    )
+
+    # Cache for metadata discovered while listing OpenAI models.
+    _openai_model_metadata = {}
+
+    # Models that typically require the Responses API style parameters even
+    # when capability information is unavailable (e.g. fallback mode).
+    _RESPONSES_PREFIXES = (
+        "o1",
+        "o3",
+        "gpt-4.1",
+        "gpt-5",
+        "gpt-4o-realtime",
+        "gpt-4o-mini-realtime",
+        "gpt-4o-audio",
+        "gpt-4o-mini-audio",
+    )
+
+    @classmethod
+    def _normalize_openai_model_id(cls, model_id):
+        if isinstance(model_id, dict):
+            model_id = model_id.get("model")
+
+        if not model_id:
+            return None
+
+        model_id = str(model_id).strip()
+        if not model_id:
+            return None
+
+        if "/" not in model_id:
+            return f"openai/{model_id}"
+
+        return model_id
+
+    @classmethod
+    def _record_openai_model_metadata(
+        cls,
+        model_id,
+        *,
+        capabilities=None,
+        requires_max_completion_tokens=None,
+    ):
+        normalized = cls._normalize_openai_model_id(model_id)
+        if not normalized:
+            return
+
+        meta = cls._openai_model_metadata.get(normalized)
+        if meta is None:
+            meta = {"capabilities": None, "requires_max_completion_tokens": None}
+
+        meta = dict(meta)
+
+        if capabilities is not None:
+            meta["capabilities"] = capabilities
+
+        if requires_max_completion_tokens is not None:
+            meta["requires_max_completion_tokens"] = bool(
+                requires_max_completion_tokens
+            )
+
+        cls._openai_model_metadata[normalized] = meta
+
+        if normalized.startswith("openai/"):
+            base_id = normalized.split("/", 1)[1]
+            cls._openai_model_metadata[base_id] = meta
+
+    @classmethod
+    def _heuristic_requires_max_completion_tokens(cls, model_id):
+        normalized = cls._normalize_openai_model_id(model_id)
+        if not normalized or not normalized.startswith("openai/"):
+            return False
+
+        base_id = normalized.split("/", 1)[1].lower()
+        for prefix in cls._RESPONSES_PREFIXES:
+            if base_id.startswith(prefix):
+                return True
+
+        if "realtime" in base_id or "audio" in base_id:
+            return True
+
+        return False
+
+    @classmethod
+    def requires_max_completion_tokens(cls, model_id):
+        normalized = cls._normalize_openai_model_id(model_id)
+        if not normalized or not normalized.startswith("openai/"):
+            return False
+
+        meta = cls._openai_model_metadata.get(normalized)
+        if meta:
+            stored = meta.get("requires_max_completion_tokens")
+            if stored is not None:
+                return bool(stored)
+
+        return cls._heuristic_requires_max_completion_tokens(normalized)
+
+    @classmethod
+    def _ensure_fallback_metadata(cls, models):
+        for model in models:
+            if cls._heuristic_requires_max_completion_tokens(model):
+                cls._record_openai_model_metadata(
+                    model, requires_max_completion_tokens=True
+                )
+            else:
+                cls._record_openai_model_metadata(model)
+
+    @classmethod
+    def _get_openai_api_key(cls):
+        """Return the best available API key for OpenAI requests."""
+
+        def _clean(value):
+            if not value:
+                return None
+            value = value.strip()
+            if not value or value.lower() == "your-api-key-here":
+                return None
+            return value
+
+        key = _clean(get_env_var("OPENAI_API_KEY"))
+        if key:
+            return key
+        return _clean(get_env_var("BASE_API_KEY"))
+
+    @classmethod
+    def _normalize_openai_base_url(cls, base_url):
+        """Normalize configured OpenAI base URLs so litellm hits the right endpoint."""
+
+        if not base_url:
+            return None
+        base_url = str(base_url).strip()
+        if not base_url:
+            return None
+
+        # Remove trailing slashes to avoid double separators when litellm appends paths.
+        normalized = base_url.rstrip("/")
+
+        # Ensure the canonical /v1 suffix exists for direct OpenAI endpoints. Avoid forcing
+        # this when users point to compatible proxies that already expose the versioned
+        # path as part of their URL.
+        lower = normalized.lower()
+        if lower.endswith("/v1") or lower.endswith("/v1beta"):
+            return normalized
+
+        if "openai" in lower and not lower.endswith("/v1"):
+            return f"{normalized}/v1"
+
+        return normalized
+
+    @classmethod
+    def _get_openai_base_url(cls):
+        # Prefer explicit environment configuration before falling back to the config file.
+        env_base = get_env_var("OPENAI_BASE_URL")
+        base_url = env_base if env_base else config.config_settings.get("OPENAI_BASE_URL")
+        if not base_url:
+            # Default to the public OpenAI endpoint if nothing has been configured.
+            base_url = "https://api.openai.com/v1"
+        return cls._normalize_openai_base_url(base_url)
+
+    @classmethod
+    def _build_litellm_model(cls, model_id):
+        """Construct a LITELLM_MODEL payload for the selected identifier."""
+
+        if not model_id:
+            return model_id
+
+        if not model_id.startswith("openai/"):
+            return model_id
+
+        kwargs = {}
+
+        api_base = cls._get_openai_base_url()
+        if api_base:
+            kwargs["api_base"] = api_base
+
+        api_key = cls._get_openai_api_key()
+        if api_key:
+            kwargs["api_key"] = api_key
+
+        if not kwargs:
+            return model_id
+
+        return {"model": model_id, "type": "kwargs", "kwargs": kwargs}
 
     # Define the input types for the node; the displayed list is a list of strings with pricing info.
     @classmethod
@@ -243,10 +462,18 @@ class LiteLLMModelProviderAdv:
         is handled to make sure we do not miss models when OpenAI adds more.
         """
 
+        cls._openai_model_metadata = {}
+
         def _fallback_models():
-            # Use the pricing table as the primary source of truth for fallbacks
-            # so we surface any model that we have explicit pricing for.
-            return list(cls.OPENAI_MODEL_COSTS.keys()) or ["openai/gpt-4o-mini"]
+            # Use the union of pricing data and our curated default list as the
+            # fallback so that headline models such as GPT-5 appear even when we
+            # cannot query the API (e.g. missing API key or network failure).
+            combined = set(cls.OPENAI_MODEL_COSTS.keys()) | set(cls.DEFAULT_OPENAI_MODELS)
+            if not combined:
+                return ["openai/gpt-4o-mini"]
+            cls._ensure_fallback_metadata(combined)
+            return sorted(combined)
+
 
         api_key = get_env_var("OPENAI_API_KEY")
         if not api_key or api_key.strip() == "" or api_key == "your-api-key-here":
@@ -255,7 +482,13 @@ class LiteLLMModelProviderAdv:
         from openai import OpenAI
 
         base_url = config.config_settings.get("OPENAI_BASE_URL")
-        client = OpenAI(api_key=api_key, base_url=base_url)
+
+        normalized_base = cls._normalize_openai_base_url(base_url)
+        if normalized_base:
+            client = OpenAI(api_key=api_key, base_url=normalized_base)
+        else:
+            client = OpenAI(api_key=api_key)
+
 
         collected_models = []
         seen = set()
@@ -279,10 +512,50 @@ class LiteLLMModelProviderAdv:
                     if model_id.startswith("ft:"):
                         continue
 
-                    if not model_id.startswith(("gpt", "o1", "o3")):
-                        continue
+
+                    # Prefer capability metadata when available to identify
+                    # chat-capable models. Fall back to id heuristics for older
+                    # responses that do not expose capabilities.
+                    capabilities = getattr(model, "capabilities", None)
+                    if isinstance(capabilities, dict):
+                        # The API may return booleans or truthy values for the
+                        # modalities. Any support for chat or text responses is
+                        # enough for this node.
+                        chat_capable = bool(
+                            capabilities.get("chat_completions")
+                            or capabilities.get("completions")
+                            or capabilities.get("responses")
+                        )
+                        if not chat_capable:
+                            continue
+                    else:
+                        if not model_id.startswith(("gpt", "o", "omni")):
+                            continue
 
                     display_id = model_id if model_id.startswith("openai/") else f"openai/{model_id}"
+
+                    requires_max_completion_tokens = False
+                    if isinstance(capabilities, dict):
+                        supports_chat = bool(
+                            capabilities.get("chat_completions")
+                            or capabilities.get("completions")
+                        )
+                        supports_responses = bool(capabilities.get("responses"))
+                        requires_max_completion_tokens = (
+                            supports_responses and not supports_chat
+                        )
+                    else:
+                        requires_max_completion_tokens = cls._heuristic_requires_max_completion_tokens(
+                            display_id
+                        )
+
+                    cls._record_openai_model_metadata(
+                        display_id,
+                        capabilities=capabilities if isinstance(capabilities, dict) else None,
+                        requires_max_completion_tokens=requires_max_completion_tokens,
+                    )
+
+
                     if display_id not in seen:
                         seen.add(display_id)
                         collected_models.append(display_id)
@@ -291,6 +564,16 @@ class LiteLLMModelProviderAdv:
                     break
 
                 last_id = getattr(response, "last_id", None)
+
+                if not last_id and data:
+                    # Some deployments omit last_id; use the final model id so
+                    # pagination continues and we do not miss newer models
+                    # (e.g. GPT-5) that appear on later pages.
+                    last_entry = data[-1]
+                    last_id = getattr(last_entry, "id", None)
+                    if last_id is None and isinstance(last_entry, dict):
+                        last_id = last_entry.get("id")
+
                 if last_id:
                     params["after"] = last_id
                 else:
@@ -332,10 +615,28 @@ class LiteLLMModelProviderAdv:
     def handler(self, **kwargs):
         selected = kwargs.get("name", None)
         if selected and " (" in selected:
-            model_id = selected.split(" (")[0]
+            model_id = selected.split(" (", 1)[0]
         else:
             model_id = selected
-        return (model_id,)
+
+        return (self._build_litellm_model(model_id),)
+
+
+def _apply_openai_max_token_overrides(use_kwargs):
+    """Normalize max token parameters for OpenAI responses-style models."""
+
+    model_name = use_kwargs.get("model")
+    if LiteLLMModelProviderAdv.requires_max_completion_tokens(model_name):
+        max_token_value = use_kwargs.pop("max_tokens", None)
+        if max_token_value is not None:
+            use_kwargs["max_completion_tokens"] = max_token_value
+        use_kwargs.pop("temperature", None)
+        use_kwargs.pop("top_p", None)
+        use_kwargs.pop("logit_bias", None)
+        return True
+
+    use_kwargs.pop("reasoning_effort", None)
+    return False
 
 
 @litellm_base
@@ -678,12 +979,10 @@ class LiteLLMCompletion:
                     }
                     n_kwargs.update(kwargs)
 
-                    if ("o1" in model) or ("o3" in model):
-                        n_kwargs["max_completion_tokens"] = n_kwargs.pop("max_tokens")
-                        n_kwargs.pop("temperature", None)
-                        n_kwargs.pop("top_p", None)
+                    if _apply_openai_max_token_overrides(n_kwargs):
+                        print("OpenAI responses-style model detected")
                     else:
-                        n_kwargs.pop("reasoning_effort", None)
+                        print("Standard completion model detected")
 
                     response = litellm.completion(
                         **n_kwargs
@@ -1031,15 +1330,10 @@ class LitellmCompletionV2:
                 #     else:
                 #         o_model=False
 
-                if ("o1" in model) or ("o3" in model):
-                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
-                    use_kwargs.pop("temperature", None)
-                    use_kwargs.pop("top_p", None)
-                    use_kwargs.pop("logit_bias", None)
-                    print("o1 or o3")
+                if _apply_openai_max_token_overrides(use_kwargs):
+                    print("OpenAI responses-style model detected")
                 else:
-                    use_kwargs.pop("reasoning_effort", None)
-                    print("NOT o1 or o3")
+                    print("Standard completion model detected")
                 print(list(use_kwargs.keys()))
                 response = litellm.completion(**use_kwargs)
 
@@ -1101,15 +1395,10 @@ class LitellmCompletionV2:
 
                 use_kwargs.pop("prompt", None)
 
-                if ("o1" in use_kwargs["model"]) or ("o3" in use_kwargs["model"]):
-                    use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
-                    use_kwargs.pop("temperature", None)
-                    use_kwargs.pop("top_p", None)
-                    use_kwargs.pop("logit_bias", None)
-                    print("o1 or o3")
+                if _apply_openai_max_token_overrides(use_kwargs):
+                    print("OpenAI responses-style model detected")
                 else:
-                    use_kwargs.pop("reasoning_effort", None)
-                    print("NOT o1 or o3")
+                    print("Standard completion model detected")
                 print(list(use_kwargs.keys()))
 
                 response = litellm.completion(
@@ -1754,11 +2043,7 @@ class LiteLLMCompletionProvider:
                 # Fix model string when we have a dict with kwargs
                 use_kwargs["model"] = model["model"]
 
-            if ("o1" in use_kwargs["model"]) or ("o3" in use_kwargs["model"]):
-                use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
-                use_kwargs.pop("temperature", None)
-                use_kwargs.pop("top_p", None)
-                use_kwargs.pop("logit_bias", None)
+            _apply_openai_max_token_overrides(use_kwargs)
 
 
             ret = litellm.completion(**use_kwargs)
@@ -1897,11 +2182,7 @@ class LiteLLMImageCaptioningProvider:
                 "presence_penalty": presence_penalty,
             }
 
-            if ("o1" in use_kwargs["model"]) or ("o3" in use_kwargs["model"]):
-                use_kwargs["max_completion_tokens"] = use_kwargs.pop("max_tokens")
-                use_kwargs.pop("temperature", None)
-                use_kwargs.pop("top_p", None)
-                use_kwargs.pop("logit_bias", None)
+            _apply_openai_max_token_overrides(use_kwargs)
 
             # Call LiteLLM for captioning
             response = litellm.completion(**use_kwargs)
