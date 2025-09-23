@@ -1800,6 +1800,21 @@ class LiteLLMCompletionListOfPrompts:
 
 
         if run_async:
+            running_loop = None
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+
+            if running_loop and running_loop.is_running():
+                print(
+                    "Warning: Async processing requested while an event loop is already running."
+                    " Falling back to synchronous processing.",
+                    file=sys.stderr,
+                )
+                run_async = False
+
+        if run_async:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
