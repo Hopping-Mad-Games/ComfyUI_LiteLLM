@@ -37,8 +37,10 @@ app.registerExtension({
                 }
 
                 // Create HTML display widget
+                const node = this;
                 const displayEl = document.createElement("div");
                 displayEl.style.width = "100%";
+                displayEl.style.minHeight = "200px";
                 displayEl.style.height = "auto";
                 displayEl.style.overflow = "auto";
                 displayEl.style.border = "1px solid #ddd";
@@ -61,6 +63,16 @@ app.registerExtension({
                 this.setSize([350, 400]);
 
                 updatePreviewHeight.call(this);
+
+                const heightWidget = this.widgets?.find?.((w) => w.name === "iframe_height");
+                if (heightWidget) {
+                    const originalCallback = heightWidget.callback;
+                    heightWidget.callback = function (...args) {
+                        const callbackResult = originalCallback?.apply(this, args);
+                        updatePreviewHeight.call(node);
+                        return callbackResult;
+                    };
+                }
 
                 return ret;
             };
@@ -89,15 +101,6 @@ app.registerExtension({
                 if (config?.widgets_values?.length) {
                     updateDisplay.call(this, config.widgets_values[0]);
                 }
-            };
-
-            const onWidgetChanged = nodeType.prototype.onWidgetChanged;
-            nodeType.prototype.onWidgetChanged = function (widget, value, ...args) {
-                const ret = onWidgetChanged?.apply(this, [widget, value, ...args]);
-                if (widget?.name === "iframe_height") {
-                    updatePreviewHeight.call(this);
-                }
-                return ret;
             };
         }
     },
