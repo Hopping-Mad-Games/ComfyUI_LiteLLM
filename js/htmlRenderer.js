@@ -18,7 +18,6 @@ app.registerExtension({
                         this,
                         "html_content",
                         ["STRING", {
-                            multiline: true,
                             default: "",
                             placeholder: "HTML content..."
                         }],
@@ -29,7 +28,7 @@ app.registerExtension({
                 // Create HTML display widget
                 const displayEl = document.createElement("div");
                 displayEl.style.width = "100%";
-                displayEl.style.height = "200px";
+                displayEl.style.height = "auto";
                 displayEl.style.overflow = "auto";
                 displayEl.style.border = "1px solid #ddd";
                 displayEl.style.borderRadius = "5px";
