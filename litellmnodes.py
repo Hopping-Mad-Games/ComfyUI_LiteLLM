@@ -1,5 +1,7 @@
 
 
+import html
+
 try:
     from . import config
     from .utils.custom_dict import CustomDict
@@ -48,8 +50,8 @@ class HTMLRenderer:
     OUTPUT_NODE = True
 
     def handler(self, html_content, iframe_height, iframe_width):
-        new_html_content = html_content.replace("\"", "'")
-        new_html_content = f"""<iframe srcdoc="{new_html_content}" style="width: {iframe_width}; height: {iframe_height};border: none;"></iframe>"""
+        escaped_html = html.escape(html_content, quote=True)
+        new_html_content = f"""<iframe srcdoc="{escaped_html}" style="width: {iframe_width}; height: {iframe_height}; border: none;"></iframe>"""
 
         # Replace newlines and double quotes in the raw HTML
 
