@@ -37,7 +37,7 @@ class HTMLRenderer:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "html_content": ("STRING", {}),
+                "html_content": ("STRING", {"multiline": True}),
                 "iframe_height": ("STRING", {"default": "800px"}),
                 "iframe_width": ("STRING", {"default": "100%"}),
             },
