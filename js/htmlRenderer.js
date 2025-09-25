@@ -5,6 +5,17 @@ app.registerExtension({
     name: "Comfy.HTMLRenderer",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name === "HTMLRenderer" && nodeData.category === "ETK/LLM/LiteLLM") {
+            const updatePreviewHeight = function () {
+                const display = this.htmlRendererDisplayEl;
+                if (!display) {
+                    return;
+                }
+
+                const heightWidget = this.widgets?.find?.((w) => w.name === "iframe_height");
+                const rawHeight = typeof heightWidget?.value === "string" ? heightWidget.value.trim() : "";
+                display.style.height = rawHeight || "auto";
+            };
+
             // Node Created
             const onNodeCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
@@ -45,7 +56,11 @@ app.registerExtension({
                     },
                 });
 
+                this.htmlRendererDisplayEl = displayEl;
+
                 this.setSize([350, 400]);
+
+                updatePreviewHeight.call(this);
 
                 return ret;
             };
@@ -56,6 +71,8 @@ app.registerExtension({
                     this.displayWidget.value = html_content;
                     app.graph.setDirtyCanvas(true);
                 }
+
+                updatePreviewHeight.call(this);
             };
 
             // onExecuted
@@ -72,6 +89,15 @@ app.registerExtension({
                 if (config?.widgets_values?.length) {
                     updateDisplay.call(this, config.widgets_values[0]);
                 }
+            };
+
+            const onWidgetChanged = nodeType.prototype.onWidgetChanged;
+            nodeType.prototype.onWidgetChanged = function (widget, value, ...args) {
+                const ret = onWidgetChanged?.apply(this, [widget, value, ...args]);
+                if (widget?.name === "iframe_height") {
+                    updatePreviewHeight.call(this);
+                }
+                return ret;
             };
         }
     },
