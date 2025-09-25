@@ -69,8 +69,9 @@ app.registerExtension({
                     const originalCallback = heightWidget.callback;
                     heightWidget.callback = function (...args) {
                         const callbackResult = originalCallback?.apply(this, args);
+                        const nextValue = callbackResult !== undefined ? callbackResult : args[0];
                         updatePreviewHeight.call(node);
-                        return callbackResult;
+                        return nextValue;
                     };
                 }
 
