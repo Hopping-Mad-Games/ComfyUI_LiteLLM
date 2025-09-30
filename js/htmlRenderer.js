@@ -104,5 +104,87 @@ app.registerExtension({
                 }
             };
         }
+
+        if (nodeData.name === "HTMLServerLink" && nodeData.category === "ETK/LLM/LiteLLM") {
+            const updateLinkDisplay = function (value) {
+                const hasUrl = typeof value === "string" && value.startsWith("/lite-html/");
+                const absoluteUrl = hasUrl ? new URL(value, window.location.origin).toString() : "";
+
+                this.__liteHtmlUrl = hasUrl ? value : "";
+
+                if (this.__liteHtmlButton) {
+                    this.__liteHtmlButton.disabled = !hasUrl;
+                }
+
+                if (this.__liteHtmlLabel) {
+                    if (hasUrl) {
+                        this.__liteHtmlLabel.textContent = absoluteUrl;
+                        this.__liteHtmlLabel.style.opacity = "1";
+                    } else {
+                        this.__liteHtmlLabel.textContent = value || "Run the node to generate a link.";
+                        this.__liteHtmlLabel.style.opacity = value ? "1" : "0.7";
+                    }
+                }
+            };
+
+            const onNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const ret = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+
+                const container = document.createElement("div");
+                container.style.display = "flex";
+                container.style.flexDirection = "column";
+                container.style.gap = "6px";
+                container.style.width = "100%";
+
+                const button = document.createElement("button");
+                button.type = "button";
+                button.textContent = "Open HTML Page";
+                button.disabled = true;
+                button.addEventListener("click", () => {
+                    if (!this.__liteHtmlUrl) {
+                        return;
+                    }
+                    const absolute = new URL(this.__liteHtmlUrl, window.location.origin).toString();
+                    window.open(absolute, "_blank", "noopener,noreferrer");
+                });
+
+                const label = document.createElement("div");
+                label.style.wordBreak = "break-all";
+                label.style.fontSize = "12px";
+                label.style.opacity = "0.7";
+                label.textContent = "Run the node to generate a link.";
+
+                container.appendChild(button);
+                container.appendChild(label);
+
+                this.addDOMWidget("html_link", "display", container, {
+                    serialize: false,
+                    getValue: () => this.__liteHtmlUrl || "",
+                    setValue: (value) => updateLinkDisplay.call(this, value),
+                });
+
+                this.__liteHtmlButton = button;
+                this.__liteHtmlLabel = label;
+                this.setSize([300, 120]);
+
+                return ret;
+            };
+
+            const onExecuted = nodeType.prototype.onExecuted;
+            nodeType.prototype.onExecuted = function (message) {
+                onExecuted?.apply(this, arguments);
+                const value = message?.string?.[0] ?? "";
+                updateLinkDisplay.call(this, value);
+            };
+
+            const onConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function (config) {
+                onConfigure?.apply(this, arguments);
+                const values = Array.isArray(config?.widgets_values) ? config.widgets_values : [];
+                const stored = values.find((v) => typeof v === "string" && v.startsWith("/lite-html/")) || "";
+                updateLinkDisplay.call(this, stored);
+            };
+        }
     },
 });

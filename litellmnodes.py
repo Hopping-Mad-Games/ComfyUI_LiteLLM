@@ -1,6 +1,27 @@
 
 
 import html
+import string
+import threading
+import uuid
+from pathlib import Path
+
+try:
+    from aiohttp import web
+except ImportError:  # pragma: no cover - server module missing in headless environments
+    web = None
+
+try:
+    from server import PromptServer
+except ImportError:  # pragma: no cover - allows module to load in non-Comfy environments
+    PromptServer = None
+
+
+_HTML_ROUTE_REGISTERED = False
+_HTML_STORAGE_DIR = None
+_HTML_STORAGE_LOCK = threading.Lock()
+_HTML_STORAGE_LIMIT = 32
+
 
 try:
     from . import config
@@ -13,6 +34,96 @@ except ImportError:
 
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
+
+
+def _init_html_storage_dir():
+    """Ensure the HTML storage directory exists inside the configured tmp path."""
+
+    global _HTML_STORAGE_DIR
+    if _HTML_STORAGE_DIR is not None:
+        return
+
+    try:
+        base_tmp = Path(config.config_settings.get("tmp_dir", "temp"))
+    except Exception:
+        base_tmp = Path("temp")
+
+    storage_dir = base_tmp / "html_server_pages"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    _HTML_STORAGE_DIR = storage_dir
+
+
+def _prune_html_storage_locked():
+    """Limit the number of stored HTML pages to the retention cap."""
+
+    if _HTML_STORAGE_DIR is None or not _HTML_STORAGE_DIR.exists():
+        return
+
+    html_files = sorted(
+        _HTML_STORAGE_DIR.glob("*.html"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    for stale_file in html_files[_HTML_STORAGE_LIMIT:]:
+        try:
+            stale_file.unlink()
+        except OSError:
+            pass
+
+
+def _ensure_html_route():
+    """Register the lite HTML endpoint once the ComfyUI server is available."""
+
+    global _HTML_ROUTE_REGISTERED
+    if _HTML_ROUTE_REGISTERED:
+        return True
+    if PromptServer is None or web is None:
+        return False
+
+    try:
+        app = PromptServer.instance.app
+    except Exception:  # pragma: no cover - PromptServer might not be ready during tests
+        return False
+
+    if app is None:
+        return False
+
+    async def serve_html(request):
+        page_id = request.match_info.get("page_id", "")
+        if not page_id or any(ch not in string.hexdigits for ch in page_id):
+            return web.Response(status=400, text="Invalid page identifier.")
+
+        _init_html_storage_dir()
+        file_path = _HTML_STORAGE_DIR / f"{page_id}.html"
+        if not file_path.exists():
+            return web.Response(status=404, text="HTML page expired or missing.")
+
+        return web.FileResponse(file_path, headers={"Cache-Control": "no-store"})
+
+    try:
+        app.router.add_get("/lite-html/{page_id}", serve_html)
+    except Exception:
+        return False
+
+    _HTML_ROUTE_REGISTERED = True
+    return True
+
+
+def _store_html_page(html_content: str) -> str:
+    """Persist HTML content to disk and return the page identifier."""
+
+    safe_html = html_content if isinstance(html_content, str) else str(html_content)
+    page_id = uuid.uuid4().hex
+
+    _init_html_storage_dir()
+    file_path = _HTML_STORAGE_DIR / f"{page_id}.html"
+
+    with _HTML_STORAGE_LOCK:
+        file_path.write_text(safe_html, encoding="utf-8")
+        _prune_html_storage_locked()
+
+    return page_id
 
 
 def litellm_base(cls):
@@ -57,6 +168,30 @@ class HTMLRenderer:
 
         ret = {"ui": {"string": [new_html_content]}, "result": (html_content,)}
         return ret
+
+
+@litellm_base
+class HTMLServerLink:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "html_content": ("STRING", {"multiline": True, "default": "<h1>Hello, ComfyUI!</h1>"}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    FUNCTION = "handler"
+    OUTPUT_NODE = True
+
+    def handler(self, html_content):
+        if not _ensure_html_route():
+            message = "HTML server endpoint unavailable. Ensure this node runs inside ComfyUI."
+            return {"ui": {"string": [message]}, "result": ("",)}
+
+        page_id = _store_html_page(html_content)
+        relative_url = f"/lite-html/{page_id}"
+        return {"ui": {"string": [relative_url]}, "result": (relative_url,)}
 
 
 
